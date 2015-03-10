@@ -25,6 +25,9 @@ local_vars = {}
 
 z3_funcs = {}
 
+var_ref = {} # variable reference dictionary - which incremented var refers to the real var
+which = {}
+
 
 ''' return the ast.Return node of the given ast.FunctionDef node, if there is one'''
 def get_return(node):
@@ -52,6 +55,7 @@ def get_func_args(node):
 class Z3Visitor(ast.NodeVisitor):
 
     def visit_Expr(self, node):
+        print ('Expr', which, local_vars)
         # check for 'requires(...)' and 'assures(...)''
         if isinstance(node.value, ast.Call) and \
             isinstance(node.value.func, ast.Name):
@@ -69,22 +73,19 @@ class Z3Visitor(ast.NodeVisitor):
 
                     # Substitute variables in body with the corresponding value
                     # found in the global variable dictionary
-                    for key in local_vars:
-                        body = re.sub(re.compile(key), local_vars[key], body)
+                    for key in which:
+                        body = re.sub(key, local_vars[which[key]], body)
 
                     eval("s.add"+body)
                     print ("s.add"+body)
         else:
             print ("Expr:", codegen.to_source(node))
 
-    ''' Update/Add to the local_vars dictionary to reflect the latest assignment'''
-    def visit_Assign(self, node):
-        # print ("Assignment:", codegen.to_source(node))
 
+    def visit_Assign(self, node):
         LHS = node.targets[0] # left hand side (Name or Tuple obj)
         RHS = node.value # right hand side
 
-        # Create a list of targets
         targets = []
         if isinstance(LHS, ast.Tuple): # multiple targets
             for target in LHS.elts:
@@ -92,59 +93,78 @@ class Z3Visitor(ast.NodeVisitor):
         else:                          # one target
             targets.append(LHS.id)
 
-        # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
-        new_val = codegen.to_source(RHS) 
-        for var in local_vars:
-            new_val = re.sub(var, "("+local_vars[var]+")", new_val)
+        body = codegen.to_source(RHS)
+        for key in which:
+            # substitute current value of x for x
+            body = re.sub(key, local_vars[which[key]], body)
+
+        for target in targets:
+            # create a new incremented variable based off of 'target'
+            incremented = target[:1] + str(eval(target[1:]+ "+ 1"))
+            # Add it to the variable dictionary, along with value
+            local_vars[incremented] = body
+            # update which var refers to target (update which)
+            which[target] = incremented
+
+    def visit_AugAssign(self, node):
+        pass
+
+    ''' Update/Add to the local_vars dictionary to reflect the latest assignment'''
+    def visit_Assign_Old(self, node):
+        pass
+        # print ("Assignment:", codegen.to_source(node))
+
+        # LHS = node.targets[0] # left hand side (Name or Tuple obj)
+        # RHS = node.value # right hand side
+
+        # # Create a list of targets
+        # targets = []
+        # if isinstance(LHS, ast.Tuple): # multiple targets
+        #     for target in LHS.elts:
+        #         targets.append(target.id)
+        # else:                          # one target
+        #     targets.append(LHS.id)
+
+        # # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
+        # new_val = codegen.to_source(RHS) 
+        # for var in local_vars:
+        #     new_val = re.sub(var, "("+local_vars[var]+")", new_val)
         
-        # For each target add the new value to the local dictionary 
-        for target in targets: 
-            local_vars[target] = str(eval(new_val))
+        # # For each target add the new value to the local dictionary 
+        # for target in targets: 
+        #     local_vars[target] = str(eval(new_val))
 
     ''' Will be used to check for calls to functions we have instantiated z3
         equivalents to, and call those equivalents with the given arguments'''
 
-    def visit_AugAssign(self, node):
-        # class AugAssign(target, op, value)
-        # target is Name node, op is Add, and value is a Num node for 1. 
-        
-        # x += 3 # Augmented assignment with Num object
-        # y *= a # Augmented assignment with Name object
-        # x += (k+t) # Augmented assignment with Expr object
-        print("----------------------")
-
-        old_val = local_vars[node.target.id]
-        mod_val = codegen.to_source(node.value)
-
-        # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
-        for var in local_vars:
-            mod_val = re.sub(var, "("+str(local_vars[var])+")", mod_val)
-        print(node.target.id, "is", old_val)
-        print("mod_val", mod_val)
 
 
-        if isinstance(node.op, ast.Add):
-            operator = '+'
-        elif isinstance(node.op, ast.Sub):
-            operator = '-'
-        elif isinstance(node.op, ast.Mult):
-            operator = '*'
-        elif isinstance(node.op, ast.Div):
-            operator = '/'
-        elif isinstance(node.op, ast.Mod):
-            operator = '%'
-        else:
-            print("Augmented Assignment of type", node.op.op, "not yet implemented")
-            return
-        # elif isinstance(node.op, ast.Pow):
+    def visit_AugAssign_Old(self, node):
+        pass
+        # old_val = local_vars[node.target.id]
+        # mod_val = codegen.to_source(node.value)
 
-        # Calculate and add the new value to the local dictionary
-        new_val = eval(str(old_val)+operator+str(mod_val))
-        local_vars[node.target.id] = str(new_val)
+        # # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
+        # for var in local_vars:
+        #     mod_val = re.sub(var, "("+str(local_vars[var])+")", mod_val)
 
-        # exec("local_vars[node.target.id] = '("+str(old_val)+operator+"("+str(mod_val)+"))'")
-        # print (local_vars)
-        print(node.target.id, "is now", new_val)
+        # if isinstance(node.op, ast.Add):
+        #     operator = '+'
+        # elif isinstance(node.op, ast.Sub):
+        #     operator = '-'
+        # elif isinstance(node.op, ast.Mult):
+        #     operator = '*'
+        # elif isinstance(node.op, ast.Div):
+        #     operator = '/'
+        # elif isinstance(node.op, ast.Mod):
+        #     operator = '%'
+        # else:
+        #     print("Augmented Assignment of type", node.op.op, "not yet implemented")
+        #     return
+
+        # # Calculate and add the new value to the local dictionary
+        # new_val = eval(str(old_val)+operator+str(mod_val))
+        # local_vars[node.target.id] = str(new_val)
 
     def visit_Call(self, node):
         print ("Call:", codegen.to_source(node))
@@ -162,7 +182,8 @@ class Z3Visitor(ast.NodeVisitor):
 
             # Add the parameter to our global variable dictionary
             local_vars[arg] = arg
-
+            which[arg] = arg
+        print(local_vars)
         # create z3 function def (need to dynamically fill in parameters)
         # how to infer return type?
         # f = z3.Function('f', z3.IntSort(), z3.IntSort(), z3.IntSort())
@@ -188,6 +209,7 @@ print (astpp.dump(tree))
 # Visit AST and preform Z3 function calls
 Z3Visitor().visit(tree)
 
+print (which)
 print (local_vars)
 result = s.check()
 print ("RESULT:", result)

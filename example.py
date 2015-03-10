@@ -1,26 +1,26 @@
 # requires(f(x, y) > 0)
-def f(x, y, j): 
+def f(x): 
 
-	requires(x == 5, y > 0)
+	requires(x == 5)
 
-	x = 10 # Simple assignment, overwrites previous value
-	x = x - 3 # Modification of existing variable
-	t, y = -1 # Multiple assignments on one line and declaration of new variable
-	k = x + t # Assignment from other variable
-	# a = b = 1 # Multiple assignment
+	x = x - 10
+	# x = x - 3 # Modification of existing variable
+	# t, y = -1 # Multiple assignments on one line and declaration of new variable
+	# k = x + t # Assignment from other variable
+	# # a = b = 1 # Multiple assignment
 
-	# Augmented assignments
-	x += 4 # Num object
-	t *= x # Name object
-	t -= (k+t) # with BinOp object
-	# x = 11 # TODO simple assignments at end
-	# t %= 3 # TODO - Modulus
-	# t += j # TODO - Referencing variable with an unknown value
-	# def t1 where t1 = t + j
+	# # Augmented assignments
+	# x += 4 # Num object
+	# t *= x # Name object
+	# t -= (k+t) # with BinOp object
+	# # x = 11 # TODO simple assignments at end
+	# # t %= 3 # TODO - Modulus
+	# # t += j # TODO - Referencing variable with an unknown value
+	# # def t1 where t1 = t + j
 
 	return x
 
-	assures(x > 0, y == -1)
+	assures(x > 0)
 
 # z = Int('z')
 # s = Solver()
