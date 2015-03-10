@@ -21,7 +21,7 @@ s = z3.Solver()
 # and a tuple of (z3 varibale name, value) as the value
 # Where 'value' corresponds to the current value of the user's variable
 # ie. (<user var> : (<z3 var>, <value>))
-vars_py_to_z3 = {} 
+local_vars = {} 
 
 z3_funcs = {}
 
@@ -48,33 +48,11 @@ def get_func_args(node):
 
     return args
 
-''' Unnecessary - remove later'''
-class RequiresTransformer(ast.NodeTransformer):
-
-    '''Transform 'requires(...)' into 's.add(...)' '''
-    def visit_Expr(self, node):
-        if (node.value, ast.Call) and \
-            isinstance(node.value.func, ast.Name) and \
-            node.value.func.id == 'requires':
-            # Making 's.add(...)' node
-            newnode = ast.Expr(ast.Call(func=ast.Attribute(
-                value=ast.Name(id='s', ctx=ast.Load()), attr='add', ctx=ast.Load()),
-                    # copying '...' (ie. filling in body with body of old node)
-                    args=node.value.args,
-                    keywords=node.value.keywords, 
-                    starargs=node.value.starargs, 
-                    kwargs=node.value.kwargs))
-            ast.copy_location(newnode, node)
-            ast.fix_missing_locations(newnode)
-            return newnode
-        # Return the original node if we don't want to change it.
-        return node
-
 ''' That main thing '''
 class Z3Visitor(ast.NodeVisitor):
 
     def visit_Expr(self, node):
-        # check for 'requires(...)
+        # check for 'requires(...)' and 'assures(...)''
         if isinstance(node.value, ast.Call) and \
             isinstance(node.value.func, ast.Name):
             if node.value.func.id == 'requires':
@@ -91,46 +69,89 @@ class Z3Visitor(ast.NodeVisitor):
 
                     # Substitute variables in body with the corresponding value
                     # found in the global variable dictionary
-                    for key in vars_py_to_z3:
-                        body = re.sub(re.compile(key), vars_py_to_z3[key], body)
+                    for key in local_vars:
+                        body = re.sub(re.compile(key), local_vars[key], body)
 
                     eval("s.add"+body)
                     print ("s.add"+body)
         else:
             print ("Expr:", codegen.to_source(node))
 
-    ''' Update/Add to the vars_py_to_z3 dictionary to reflect the latest assignment'''
+    ''' Update/Add to the local_vars dictionary to reflect the latest assignment'''
     def visit_Assign(self, node):
-        print ("Assignment:", codegen.to_source(node))
+        # print ("Assignment:", codegen.to_source(node))
 
-        targets = node.targets[0] # left hand side (Name or Tuple obj)
-        value = node.value # right hand side
+        LHS = node.targets[0] # left hand side (Name or Tuple obj)
+        RHS = node.value # right hand side
 
-        if isinstance(targets, ast.Tuple): # multiple targets
-            for target in targets.elts:
-                if target.id not in vars_py_to_z3: # add
-                    vars_py_to_z3[target.id] = codegen.to_source(node.value)
-                else: # update
-                    old_val = vars_py_to_z3[target.id] 
-                    new_val = codegen.to_source(node.value)
-                    updated_val = re.sub(re.compile(target.id), "("+new_val+")", old_val)
-                    vars_py_to_z3[target.id] = updated_val
+        # Create a list of targets
+        targets = []
+        if isinstance(LHS, ast.Tuple): # multiple targets
+            for target in LHS.elts:
+                targets.append(target.id)
+        else:                          # one target
+            targets.append(LHS.id)
 
-        else : # only one target
-            old_val = vars_py_to_z3[targets.id] 
-            new_val = codegen.to_source(node.value)
-            updated_val = re.sub(re.compile(targets.id), "("+new_val+")", old_val)
-            
-            vars_py_to_z3[targets.id] = updated_val
+        # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
+        new_val = codegen.to_source(RHS) 
+        for var in local_vars:
+            new_val = re.sub(var, "("+local_vars[var]+")", new_val)
+        
+        # For each target add the new value to the local dictionary 
+        for target in targets: 
+            local_vars[target] = str(eval(new_val))
 
     ''' Will be used to check for calls to functions we have instantiated z3
         equivalents to, and call those equivalents with the given arguments'''
+
+    def visit_AugAssign(self, node):
+        # class AugAssign(target, op, value)
+        # target is Name node, op is Add, and value is a Num node for 1. 
+        
+        # x += 3 # Augmented assignment with Num object
+        # y *= a # Augmented assignment with Name object
+        # x += (k+t) # Augmented assignment with Expr object
+        print("----------------------")
+
+        old_val = local_vars[node.target.id]
+        mod_val = codegen.to_source(node.value)
+
+        # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
+        for var in local_vars:
+            mod_val = re.sub(var, "("+str(local_vars[var])+")", mod_val)
+        print(node.target.id, "is", old_val)
+        print("mod_val", mod_val)
+
+
+        if isinstance(node.op, ast.Add):
+            operator = '+'
+        elif isinstance(node.op, ast.Sub):
+            operator = '-'
+        elif isinstance(node.op, ast.Mult):
+            operator = '*'
+        elif isinstance(node.op, ast.Div):
+            operator = '/'
+        elif isinstance(node.op, ast.Mod):
+            operator = '%'
+        else:
+            print("Augmented Assignment of type", node.op.op, "not yet implemented")
+            return
+        # elif isinstance(node.op, ast.Pow):
+
+        # Calculate and add the new value to the local dictionary
+        new_val = eval(str(old_val)+operator+str(mod_val))
+        local_vars[node.target.id] = str(new_val)
+
+        # exec("local_vars[node.target.id] = '("+str(old_val)+operator+"("+str(mod_val)+"))'")
+        # print (local_vars)
+        print(node.target.id, "is now", new_val)
+
     def visit_Call(self, node):
         print ("Call:", codegen.to_source(node))
 
     def visit_FunctionDef(self, node):
         
-        print ("Func:", codegen.to_source(node))
+        # print ("Func:", codegen.to_source(node)) # This blows up for some reason
 
         arg_list = get_func_args(node)
 
@@ -140,7 +161,7 @@ class Z3Visitor(ast.NodeVisitor):
             exec(arg+" = z3.Int('"+arg+"')", globals())
 
             # Add the parameter to our global variable dictionary
-            vars_py_to_z3[arg] = arg
+            local_vars[arg] = arg
 
         # create z3 function def (need to dynamically fill in parameters)
         # how to infer return type?
@@ -155,6 +176,7 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_Return(self, node):
         print ("Return:", codegen.to_source(node))
 
+
 with open (sys.argv[1], "r") as myfile:
         data = myfile.read()
 
@@ -163,13 +185,10 @@ tree = ast.parse(data)
 print ("------- original -------")
 print (astpp.dump(tree))
 
-# tree = RequiresTransformer().visit(tree)
-# print ("------- z3 tree -------")
-# print (astpp.dump(tree))
-
 # Visit AST and preform Z3 function calls
 Z3Visitor().visit(tree)
 
+print (local_vars)
 result = s.check()
 print ("RESULT:", result)
 
@@ -189,10 +208,17 @@ print "failed to prove"
 '''
 
 '''
-////////////////// NOTES ON THIS SCRIPT /////////////////////
-In the users code, Pre and Post-conditions must be declared after the function
-definition line (def f(x):), because the z3 variables referenced in the 
-pre/post condition calls are instantiated when the function def line is parsed
+////////////////////////////// RULES /////////////////////////////////
+1. In the users code, Pre-conditions must be declared after the function
+definition line 'def f(x):', because the z3 variables referenced in the 
+pre/post condition calls are instantiated when the function def line is parsed. 
 
+2. Post conditions must be declared after the function body, because we must first
+read through the body to see how variables are modified. 
+
+////////////////////////////// NOTES /////////////////////////////////
+1. Variables and their values are added to the local dictionary:
+    - upon any assignment
+    - upon reading the arguments of a FunctionDef
 
 '''
