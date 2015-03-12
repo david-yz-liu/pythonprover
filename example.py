@@ -1,12 +1,13 @@
 # requires(f(x, y) > 0)
-def f(x): 
+def f(x, y): 
 
 	requires(x == 5)
 
-	x = x - 10
-	# x = x - 3 # Modification of existing variable
-	# t, y = -1 # Multiple assignments on one line and declaration of new variable
-	# k = x + t # Assignment from other variable
+	x = x - 10 # multiple modifications in a row (checking the correct creation of new xn vars)
+	x = x / 2
+	x, y = 14 # Multiple assignments on one line
+	a = 1 # declaration of new variable
+	b = x + y # Assignment from other variables
 	# # a = b = 1 # Multiple assignment
 
 	# # Augmented assignments
@@ -17,7 +18,6 @@ def f(x):
 	# # t %= 3 # TODO - Modulus
 	# # t += j # TODO - Referencing variable with an unknown value
 	# # def t1 where t1 = t + j
-
 	return x
 
 	assures(x > 0)

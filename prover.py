@@ -4,6 +4,8 @@ import sys
 from ast import *
 import imp
 import re
+from pprint import pprint
+from operator import itemgetter
 # import z3
 # from z3 import *
 # import codegen 
@@ -17,16 +19,16 @@ sys.path.append('/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4
 z3 = imp.load_source('z3.py', '/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/bin/z3.py')
 
 s = z3.Solver()
-# Dictionary containing the name of the user's variable as a key
-# and a tuple of (z3 varibale name, value) as the value
-# Where 'value' corresponds to the current value of the user's variable
-# ie. (<user var> : (<z3 var>, <value>))
-local_vars = {} 
 
-z3_funcs = {}
+local_vars = {} # variable reference dictionary - all variable (including incremented)
+which = {} # Which incremented var corresponds to its z3 var
 
-var_ref = {} # variable reference dictionary - which incremented var refers to the real var
-which = {}
+# Scoping idea: for each scope have a 'which' dictionary, have a 'meta_which' dictionary
+# that keeps track of which 'which' dictionary you are using in that moment.
+
+def pretty_print_dic(dictionary):
+    for k, v in sorted(dictionary.items(), key=itemgetter(1)):
+        print (k, ":", v)
 
 
 ''' return the ast.Return node of the given ast.FunctionDef node, if there is one'''
@@ -55,7 +57,6 @@ def get_func_args(node):
 class Z3Visitor(ast.NodeVisitor):
 
     def visit_Expr(self, node):
-        print ('Expr', which, local_vars)
         # check for 'requires(...)' and 'assures(...)''
         if isinstance(node.value, ast.Call) and \
             isinstance(node.value.func, ast.Name):
@@ -86,6 +87,7 @@ class Z3Visitor(ast.NodeVisitor):
         LHS = node.targets[0] # left hand side (Name or Tuple obj)
         RHS = node.value # right hand side
 
+        # Create a list of targets to assign to
         targets = []
         if isinstance(LHS, ast.Tuple): # multiple targets
             for target in LHS.elts:
@@ -95,16 +97,23 @@ class Z3Visitor(ast.NodeVisitor):
 
         body = codegen.to_source(RHS)
         for key in which:
-            # substitute current value of x for x
-            body = re.sub(key, local_vars[which[key]], body)
+            # substitute any variables with their present values
+            body = re.sub(key, "("+local_vars[which[key]]+")", body)
 
         for target in targets:
-            # create a new incremented variable based off of 'target'
-            incremented = target[:1] + str(eval(target[1:]+ "+ 1"))
-            # Add it to the variable dictionary, along with value
-            local_vars[incremented] = body
-            # update which var refers to target (update which)
-            which[target] = incremented
+            if target not in which: # new variable
+                which[target] = target
+                local_vars[target] = body
+                exec("global "+target)
+                exec(target+" = z3.Int('"+target+"')", globals())
+            else: # existing variable
+                cur = which[target]
+                # create a new incremented variable based off of 'target'
+                incremented = cur[:1] + str(eval(cur[1:]+ "+ 1"))
+                # Add it to the variable dictionary, along with value
+                local_vars[incremented] = body
+                # update which var refers to target (update which)
+                which[target] = incremented
 
     def visit_AugAssign(self, node):
         pass
@@ -209,8 +218,14 @@ print (astpp.dump(tree))
 # Visit AST and preform Z3 function calls
 Z3Visitor().visit(tree)
 
-print (which)
-print (local_vars)
+print ("which") 
+# pprint (which)
+# sorted( ((v,k) for k,v in which.iteritems()))
+pretty_print_dic(which)
+
+print ("local_vars") 
+pretty_print_dic(local_vars)
+
 result = s.check()
 print ("RESULT:", result)
 
