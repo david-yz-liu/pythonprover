@@ -27,6 +27,7 @@ which = {} # Which incremented var corresponds to its z3 var
 # that keeps track of which 'which' dictionary you are using in that moment.
 
 def pretty_print_dic(dictionary):
+    # exec("print('"+str(dictionary)+"'')") # Print name of dictionary
     for k, v in sorted(dictionary.items(), key=itemgetter(1)):
         print (k, ":", v)
 
@@ -89,12 +90,14 @@ class Z3Visitor(ast.NodeVisitor):
 
         # Create a list of targets to assign to
         targets = []
-        if isinstance(LHS, ast.Tuple): # multiple targets
+        if isinstance(LHS, ast.Tuple): # multiple, comma seperated, targets
             for target in LHS.elts:
                 targets.append(target.id)
-        else:                          # one target
-            targets.append(LHS.id)
+        else: # assignment of form: x1 = x2 = ... = <RHS> for all xn where 0 < n
+            for nameObj in node.targets: 
+                targets.append(nameObj.id)  
 
+        # assemble the right hand side of the assignment
         body = codegen.to_source(RHS)
         for key in which:
             # substitute any variables with their present values
@@ -106,6 +109,7 @@ class Z3Visitor(ast.NodeVisitor):
                 local_vars[target] = body
                 exec("global "+target)
                 exec(target+" = z3.Int('"+target+"')", globals())
+
             else: # existing variable
                 cur = which[target]
                 # create a new incremented variable based off of 'target'
@@ -146,34 +150,40 @@ class Z3Visitor(ast.NodeVisitor):
     ''' Will be used to check for calls to functions we have instantiated z3
         equivalents to, and call those equivalents with the given arguments'''
 
-
-
-    def visit_AugAssign_Old(self, node):
+    def visit_AugAssign(self, node):
         pass
-        # old_val = local_vars[node.target.id]
-        # mod_val = codegen.to_source(node.value)
+        old_val = local_vars[which[node.target.id]]
+        mod_val = codegen.to_source(node.value)
 
-        # # Rebuild RHS: Substitute the dictionary value of each variable into the RHS
-        # for var in local_vars:
-        #     mod_val = re.sub(var, "("+str(local_vars[var])+")", mod_val)
+        # Rebuild RHS: Substitute the dictionary value of each variable
+        for key in which:
+            # substitute any variables with their present values
+            mod_val = re.sub(key, "("+str(local_vars[which[key]])+")", mod_val)
 
-        # if isinstance(node.op, ast.Add):
-        #     operator = '+'
-        # elif isinstance(node.op, ast.Sub):
-        #     operator = '-'
-        # elif isinstance(node.op, ast.Mult):
-        #     operator = '*'
-        # elif isinstance(node.op, ast.Div):
-        #     operator = '/'
-        # elif isinstance(node.op, ast.Mod):
-        #     operator = '%'
-        # else:
-        #     print("Augmented Assignment of type", node.op.op, "not yet implemented")
-        #     return
+        if isinstance(node.op, ast.Add):
+            operator = '+'
+        elif isinstance(node.op, ast.Sub):
+            operator = '-'
+        elif isinstance(node.op, ast.Mult):
+            operator = '*'
+        elif isinstance(node.op, ast.Div):
+            operator = '/'
+        elif isinstance(node.op, ast.Mod):
+            operator = '%'
+        else:
+            print("Augmented Assignment of type", node.op.op, "not yet implemented")
+            return
 
-        # # Calculate and add the new value to the local dictionary
-        # new_val = eval(str(old_val)+operator+str(mod_val))
-        # local_vars[node.target.id] = str(new_val)
+        # Calculate and add the new value to the local dictionary
+        new_val = "("+str(old_val)+") "+operator+" ("+str(mod_val)+")"
+
+        target = which[node.target.id]
+        # Create a new incremented variable based off of 'target'
+        incremented = target[:1] + str(eval(target[1:]+ "+ 1"))
+        # Add it to the variable dictionary, along with value
+        local_vars[incremented] = new_val
+        # update which var refers to the target (update which)
+        which[node.target.id] = incremented
 
     def visit_Call(self, node):
         print ("Call:", codegen.to_source(node))
@@ -192,7 +202,7 @@ class Z3Visitor(ast.NodeVisitor):
             # Add the parameter to our global variable dictionary
             local_vars[arg] = arg
             which[arg] = arg
-        print(local_vars)
+
         # create z3 function def (need to dynamically fill in parameters)
         # how to infer return type?
         # f = z3.Function('f', z3.IntSort(), z3.IntSort(), z3.IntSort())
@@ -218,12 +228,12 @@ print (astpp.dump(tree))
 # Visit AST and preform Z3 function calls
 Z3Visitor().visit(tree)
 
-print ("which") 
+print ("which:") 
 # pprint (which)
 # sorted( ((v,k) for k,v in which.iteritems()))
 pretty_print_dic(which)
 
-print ("local_vars") 
+print ("local_vars:") 
 pretty_print_dic(local_vars)
 
 result = s.check()
