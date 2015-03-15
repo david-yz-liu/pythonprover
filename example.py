@@ -1,16 +1,16 @@
 
 def f(x, y, j): 
 
-	requires(x == 5)
+	requires(x < 2)
 
 	x = 4
 
 	if x == 3:
 		x = (-10)
 	elif x == 4:
-		x == 22222
+		x = 22222
 	else:
-		x == 33333
+		x = 33333
 
 	# elif b == 6:
 	# 	b =16

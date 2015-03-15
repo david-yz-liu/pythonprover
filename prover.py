@@ -51,10 +51,13 @@ def get_func_args(node):
 ''' The main thing '''
 class Z3Visitor(ast.NodeVisitor):
 
-    def __init__(self, var_dictionary, var_ref_dictionary, z3_solver):
+    def __init__(self, var_dictionary, var_ref_dictionary, assertion_list=[]):
+        # For some reason having the dictionaries have default arguments screws up the inheritance 
+        # TODO fix it so that you don't have to ever call somthing like: Z3Visitor({}, {})
         self.local_vars = var_dictionary # variable reference dictionary - all variable (including incremented)
         self.which = var_ref_dictionary # Which incremented var corresponds to its z3 var
-        self.solver = z3_solver
+        # self.solver = z3_solver # used for unsucessful Solver-Attribute method
+        self.assertions = copy.copy(assertion_list)
 
     def visit_If(self, node):
 
@@ -64,18 +67,22 @@ class Z3Visitor(ast.NodeVisitor):
             condition = re.sub(key, self.local_vars[self.which[key]], condition)
 
         # Create a visitor to visit the if-condition, and maybe its body
-        if_visitor = Z3Visitor(self.local_vars, self.which, copy.copy(self.solver)) # THIS COPY FAILS - THUS THIS WHOLE MEATHOD FAILS
-        if_visitor.sol = copy.copy(self.solver) 
-        eval("if_visitor.sol.add"+condition)
+        if_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
+        # eval("if_visitor.assertions.append(condition)")
 
         # If the if-condition is true, visit the body
-        if str(if_visitor.sol.check()) == 'sat':
+        so_far = z3.Solver()
+        for assertion in self.assertions:
+            eval("so_far.add("+assertion+")")
+
+        eval("so_far.add"+condition)
+        if str(so_far.check()) == 'sat':
+            print("visiting if-body")
             # Visit body
             for elem in node.body:
                 if_visitor.visit(elem)
 
             # Update class info
-            self.solver = if_visitor.sol # Add any z3 calls that might have been made in the body
             self.local_vars.update(if_visitor.local_vars) # Add any new variable
             self.which.update(if_visitor.which) # Update the current version of each variable
             return # Do not bother reading any following elif/else conditions
@@ -91,21 +98,20 @@ class Z3Visitor(ast.NodeVisitor):
                 condition = re.sub(key, self.local_vars[self.which[key]], condition)
 
             # Create solver, check condition, execute body if condition is true - same as above with If
-            elif_visitor = Z3Visitor(self.local_vars, self.which, self.solver)
+            elif_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
+            so_far = z3.Solver()
+            eval("so_far.add"+condition)
+            for assertion in self.assertions:
+                eval("so_far.add("+assertion+")")
 
-            if str(elif_visitor.solver.check()) == 'unsat':
-                print("not solvable even before adding condition")
+            if str(so_far.check()) == 'sat':
 
-            eval("elif_visitor.solver.add"+condition)
-            print("elif_visitor.solver.add"+condition)
-            if str(elif_visitor.solver.check()) == 'sat':
-                print("visiting body")
+                print("visiting elif-body")
                 # Visit body
                 for elem in cur_orelse[0].body:
                     elif_visitor.visit(elem)
 
                 # Update class attributes
-                self.solver = elif_visitor.solver # Add any z3 calls that might have been made in the body
                 self.local_vars.update(elif_visitor.local_vars) # Add any new variable
                 self.which.update(elif_visitor.which) # Update the current version of each variable
                 return # Do not bother reading any following elif/else conditions
@@ -114,13 +120,12 @@ class Z3Visitor(ast.NodeVisitor):
             cur_orelse = cur_orelse[0].orelse
 
         # Deal with the else statement (possibly empty)
-        else_visitor = Z3Visitor(self.local_vars, self.which, self.solver)
-        print("else", cur_orelse)
+        else_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
+
         for elem in cur_orelse:
             else_visitor.visit(elem)
 
         # Update class attributes
-        self.solver = else_visitor.solver # Add any z3 calls that might have been made in the body
         self.local_vars.update(else_visitor.local_vars) # Add any new variable
         self.which.update(else_visitor.which) # Update the current version of each variable
 
@@ -137,15 +142,15 @@ class Z3Visitor(ast.NodeVisitor):
 
     def visit_Expr(self, node):
         # check for 'requires(...)' and 'assures(...)''
-        # can probablt optimize this function by merging both cases
+        # can probably optimize this function by merging both cases
         if isinstance(node.value, ast.Call) and \
             isinstance(node.value.func, ast.Name):
             if node.value.func.id == 'requires':
                 # Uncompile 'bodyx' in 'requires(body1, body2, ...) for all x
                 for condition in node.value.args:
                     body = codegen.to_source(condition)
-                    # self.z3_calls.append("s.add"+body)
-                    eval("self.solver.add"+body)
+                    self.assertions.append(body)
+                    # eval("self.solver.add"+body)
                     print ("s.add"+body)
 
             elif node.value.func.id == 'assures':
@@ -158,8 +163,8 @@ class Z3Visitor(ast.NodeVisitor):
                     for key in self.which:
                         body = re.sub(key, self.local_vars[self.which[key]], body)
 
-                    eval("self.solver.add"+body)
-                    # self.z3_calls.append("s.add"+body)
+                    # eval("self.solver.add"+body)
+                    self.assertions.append(body)
                     print ("s.add"+body)
         else:
             print ("Expr:", codegen.to_source(node))
@@ -263,11 +268,9 @@ class Z3Visitor(ast.NodeVisitor):
         # return_node = get_return(node)
 
         # Visit function body and build z3 representation
-        func_visitor = Z3Visitor(self.local_vars, self.which, self.solver)
+        func_visitor = Z3Visitor(self.local_vars, self.which, self.assertions)
         for elem in node.body:
             func_visitor.visit(elem)
-
-        # self.z3_calls += func_visitor.get_Z3_Calls()
 
     def visit_Return(self, node):
         print ("Return:", codegen.to_source(node))
@@ -286,7 +289,7 @@ print ("------- original -------")
 print (astpp.dump(tree))
 
 # Visit AST and aggregate Z3 function calls
-my_visitor = Z3Visitor({}, {}, z3.Solver())
+my_visitor = Z3Visitor({}, {})
 my_visitor.visit(tree)
 
 print ("which:") 
@@ -297,7 +300,10 @@ pretty_print_dic(my_visitor.which)
 print ("local_vars:") 
 pretty_print_dic(my_visitor.local_vars)
 
-result = my_visitor.solver.check()
+final = z3.Solver()
+for assertion in my_visitor.assertions:
+    eval("final.add("+assertion+")")
+result = final.check()
 print ("RESULT:", result)
 
 # if (result):
