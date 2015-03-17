@@ -51,13 +51,19 @@ def get_func_args(node):
 ''' The main thing '''
 class Z3Visitor(ast.NodeVisitor):
 
+    def visit_For(self, node):
+        pass
+    
+    def visit_While(self, node):
+        pass
+
     def __init__(self, var_dictionary, var_ref_dictionary, assertion_list=[]):
         # For some reason having the dictionaries have default arguments screws up the inheritance 
         # TODO fix it so that you don't have to ever call somthing like: Z3Visitor({}, {})
         self.local_vars = var_dictionary # variable reference dictionary - all variable (including incremented)
         self.which = var_ref_dictionary # Which incremented var corresponds to its z3 var
         # self.solver = z3_solver # used for unsucessful Solver-Attribute method
-        self.assertions = copy.copy(assertion_list)
+        self.assertions = assertion_list
 
     def visit_If(self, node):
 
@@ -68,14 +74,14 @@ class Z3Visitor(ast.NodeVisitor):
 
         # Create a visitor to visit the if-condition, and maybe its body
         if_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
-        # eval("if_visitor.assertions.append(condition)")
 
-        # If the if-condition is true, visit the body
+        # Add existing z3 assertions
         so_far = z3.Solver()
+        eval("so_far.add"+condition)
         for assertion in self.assertions:
             eval("so_far.add("+assertion+")")
 
-        eval("so_far.add"+condition)
+        # If the if-condition is true, visit the body
         if str(so_far.check()) == 'sat':
             print("visiting if-body")
             # Visit body
@@ -133,12 +139,6 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_IfExpr(self, node):
         pass
         # An expression such as a if b else c
-    
-    def visit_For(self, node):
-        pass
-    
-    def visit_While(self, node):
-        pass
 
     def visit_Expr(self, node):
         # check for 'requires(...)' and 'assures(...)''
@@ -185,6 +185,8 @@ class Z3Visitor(ast.NodeVisitor):
 
         # assemble the right hand side of the assignment
         body = codegen.to_source(RHS)
+
+        # below moved to tree
         for key in self.which:
             # substitute any variables with their present values
             body = re.sub(key, "("+self.local_vars[self.which[key]]+")", body)
