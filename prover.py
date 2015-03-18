@@ -20,11 +20,29 @@ codegen = imp.load_source('codegen', '/Library/Frameworks/Python.framework/Versi
 sys.path.append('/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/bin/')
 z3 = imp.load_source('z3.py', '/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/bin/z3.py')
 
+global_solver = z3.Solver()
+global_vars = {}
+
+# Since print(<z3.Solver()>) doesn't work, use this list to debug/keep trak of what's in the solver
+z3_calls = []
+z3_vars = []
+
+
+# TODO:
+# variable instantiation 
+#     - declare new incremented variable
+#     - assert its relationship to the old one
+# if statements
+#     - condition implies new var == final var at end of body
+#     - new var = Or (final var at end of if, final var at end of else)
+#     - NEED: final vars for each
+#             before var
+#             after var
+
 def pretty_print_dic(dictionary):
     # exec("print('"+str(dictionary)+"'')") # Print name of dictionary
     for k, v in sorted(dictionary.items(), key=itemgetter(1)):
         print (k, ":", v)
-
 
 ''' return the ast.Return node of the given ast.FunctionDef node, if there is one'''
 def get_return(node):
@@ -56,14 +74,6 @@ class Z3Visitor(ast.NodeVisitor):
     
     def visit_While(self, node):
         pass
-
-    def __init__(self, var_dictionary, var_ref_dictionary, assertion_list=[]):
-        # For some reason having the dictionaries have default arguments screws up the inheritance 
-        # TODO fix it so that you don't have to ever call somthing like: Z3Visitor({}, {})
-        self.local_vars = var_dictionary # variable reference dictionary - all variable (including incremented)
-        self.which = var_ref_dictionary # Which incremented var corresponds to its z3 var
-        # self.solver = z3_solver # used for unsucessful Solver-Attribute method
-        self.assertions = assertion_list
 
     def visit_If(self, node):
 
@@ -185,39 +195,47 @@ class Z3Visitor(ast.NodeVisitor):
 
         # assemble the right hand side of the assignment
         body = codegen.to_source(RHS)
-
-        # below moved to tree
-        for key in self.which:
-            # substitute any variables with their present values
-            body = re.sub(key, "("+self.local_vars[self.which[key]]+")", body)
+        for key in global_vars:
+            # substitute any variables with their present incremented variable
+            body = re.sub(key, global_vars[key], body)
 
         for target in targets:
-            if target not in self.which: # new variable
-                self.which[target] = target
-                self.local_vars[target] = body
+            if target not in global_vars: # New variable
+                global_vars[target] = target
                 exec("global "+target)
                 exec(target+" = z3.Int('"+target+"')", globals())
+                exec("global_solver.add("+target+" == "+body+")")
+                z3_vars.append(target)
+                z3_calls.append(target+" == "+body)
 
-            else: # existing variable
-                cur = self.which[target]
+            else: # Existing variable
+                cur_var = global_vars[target]
                 # create a new incremented variable based off of 'target'
-                incremented = cur[:1] + str(eval(cur[1:]+ "+ 1"))
-                # Add it to the variable dictionary, along with value
-                self.local_vars[incremented] = body
-                # update which var refers to target (update which)
-                self.which[target] = incremented
+                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+                # Update variable dictionary
+                global_vars[target] = incremented
+                # Declare incremented as z3 object
+                exec("global "+incremented)
+                exec(incremented+" = z3.Int('"+incremented+"')", globals())
+                # Declare the new variable's relationship with its predecessor
+                exec("global_solver.add("+incremented+" == "+body+")")
+
+                z3_vars.append(incremented)
+                z3_calls.append(incremented+" == "+body)
+
 
     ''' Will be used to check for calls to functions we have instantiated z3
         equivalents to, and call those equivalents with the given arguments'''
 
     def visit_AugAssign(self, node):
-        old_val = self.local_vars[self.which[node.target.id]]
-        mod_val = codegen.to_source(node.value)
+        target = node.target.id
+        cur_var = global_vars[node.target.id] # The current incremented variable representing target
 
+        RHS = codegen.to_source(node.value)
         # Rebuild RHS: Substitute the dictionary value of each variable
-        for key in self.which:
+        for key in global_vars:
             # substitute any variables with their present values
-            mod_val = re.sub(key, "("+str(self.local_vars[self.which[key]])+")", mod_val)
+            RHS = re.sub(key, global_vars[key], RHS)
 
         if isinstance(node.op, ast.Add):
             operator = '+'
@@ -233,16 +251,21 @@ class Z3Visitor(ast.NodeVisitor):
             print("Augmented Assignment of type", node.op.op, "not yet implemented")
             return
 
-        # Calculate and add the new value to the local dictionary
-        new_val = "("+str(old_val)+") "+operator+" ("+str(mod_val)+")"
+        # Build the new variable's relationship with its predecessor
+        body = cur_var+" "+operator+" "+RHS
 
-        target = self.which[node.target.id]
         # Create a new incremented variable based off of 'target'
-        incremented = target[:1] + str(eval(target[1:]+ "+ 1"))
-        # Add it to the variable dictionary, along with value
-        self.local_vars[incremented] = new_val
-        # update which var refers to the target (update which)
-        self.which[node.target.id] = incremented
+        incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+        # Update the variable dictionary
+        global_vars[target] = incremented
+        # Declare incremented as z3 object
+        exec("global "+incremented)
+        exec(incremented+" = z3.Int('"+incremented+"')", globals())
+        # Declare the new variable's relationship with its predecessor
+        exec("global_solver.add("+incremented+" == "+body+")")
+
+        z3_vars.append(incremented)
+        z3_calls.append(incremented+" == "+body)
 
     def visit_Call(self, node):
         pass
@@ -256,18 +279,11 @@ class Z3Visitor(ast.NodeVisitor):
 
         for arg in arg_list:
             # Declare each parameter as a global variable
-            exec("global "+arg)
-            exec(arg+" = z3.Int('"+arg+"')", globals())
-
-            # Add the parameter to our global variable dictionary
-            self.local_vars[arg] = arg
-            self.which[arg] = arg
-
-        # create z3 function def (need to dynamically fill in parameters)
-        # how to infer return type?
-        # f = z3.Function('f', z3.IntSort(), z3.IntSort(), z3.IntSort())
-        # exec(node.name+" = z3.Funciton('"node.name"', "+" z3.IntSort(),"*len(arg_list)+"return")
-        # return_node = get_return(node)
+            if arg not in global_vars: # New variable
+                global_vars[arg] = arg
+                exec("global "+arg)
+                exec(arg+" = z3.Int('"+arg+"')", globals())
+                z3_vars.append(arg)
 
         # Visit function body and build z3 representation
         func_visitor = Z3Visitor(self.local_vars, self.which, self.assertions)
@@ -276,10 +292,6 @@ class Z3Visitor(ast.NodeVisitor):
 
     def visit_Return(self, node):
         print ("Return:", codegen.to_source(node))
-
-    # Bother having a getter method? 
-    def get_Z3_Calls(self):
-        return self.z3_calls
 
 
 with open (sys.argv[1], "r") as myfile:
@@ -294,19 +306,17 @@ print (astpp.dump(tree))
 my_visitor = Z3Visitor({}, {})
 my_visitor.visit(tree)
 
-print ("which:") 
-# pprint (which)
-# sorted( ((v,k) for k,v in self.which.iteritems()))
-pretty_print_dic(my_visitor.which)
-
-print ("local_vars:") 
-pretty_print_dic(my_visitor.local_vars)
-
-final = z3.Solver()
-for assertion in my_visitor.assertions:
-    eval("final.add("+assertion+")")
-result = final.check()
+result = global_solver.check()
 print ("RESULT:", result)
+print ("\nvars", len(z3_vars))
+for var in sorted(z3_vars):
+    print(var)
+print ("\ncalls", len(z3_calls))
+for call in sorted(z3_calls):
+    print (call)
+
+# print(global_solver)
+# print(global_solver.model())
 
 # if (result):
 #     m = s.model()

@@ -5,34 +5,27 @@ def f(x, y, j):
 
 	x = 4
 
-	if x == 3:
-		x = (-10)
-	elif x == 4:
-		x = 22222
-	else:
-		x = 33333
-
-	# elif b == 6:
-	# 	b =16
-	# elif c == 12:
-	# 	c = 64
+	# if x == 3:
+	# 	x = (-10)
+	# elif x == 4:
+	# 	x = 22222
 	# else:
-	# 	d = 1000
+	# 	x = 33333
 
 	# x = x - 10 # multiple modifications in a row (checking the correct creation of new xn vars)	# x = x / 2
 
-	# a = 3.14 # declaration of new variable
-	# k = 2
+	# pie = 3.14 # declaration of new variable
 	# b = x + y # Assignment from other variables
 	# x, y, z, t = 14 # Multiple assignments on one line
-	# # a = b = 111 # Multiple assignment
-	# # # Augmented assignments
-	# x += 5 # Num object
-	# t *= x # Name object
-	# t -= (a+b) # with BinOp object
-	# x = 11 # TODO simple assignments at end
-	# t %= 3 #  Modulus
-	# t += j #  Referencing variable with an unknown value
+	# a = b = 111 # Multiple assignment
+	t = 1
+	# Augmented assignments
+	x += 5 # Num object
+	t *= x # Name object
+	t -= (y + j) # with BinOp object
+	x = 11 # TODO simple assignments at end
+	t %= 3 #  Modulus
+	t += j #  Referencing variable with an unknown value
 
 # 	return x
 
