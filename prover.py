@@ -94,49 +94,79 @@ class Z3Visitor(ast.NodeVisitor):
 
         # Take a snapshot of the variable set after exiting the if-elif-else block
         after = copy.copy(global_vars)
-        print("before", before)
-        print("after", after)
+        # print("before", before)
+        # print("after", after)
         # Check which variables have changed, create new incremented variables that
         # are either the old or the new value. This represents the if-elif-else block
         for key in after:
             if before[key] != after[key]:
                 cur_var = after[key]
+                # create a new incremented variable based off of 'target'
                 incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                global_vars[incremented] = "OR("+before[key]+", "+after[key]+")"
-                print("OR("+before[key]+", "+after[key]+")")
+                # Update variable dictionary
+                global_vars[key] = incremented
+                # Declare new z3 variable
+                exec("global "+incremented)
+                exec(incremented+" = z3.Int('"+incremented+"')", globals())
 
-        # # Loop over elifs (if any) until we find a satisfiable one.
-        # cur_orelse = node.orelse
-        # while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
-        #     print("**********\ncur_orelse", cur_orelse)
-        #     # Having to index into a list like this is terrible, clean up later
-        #     # Build the test condition, substitute any variables
-        #     condition = codegen.to_source(cur_orelse[0].test)
-        #     for key in self.which:
-        #         condition = re.sub(key, self.local_vars[self.which[key]], condition)
+                exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
+                z3_vars.append(incremented)
+                z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
 
-        #     # Create solver, check condition, execute body if condition is true - same as above with If
-        #     elif_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
-        #     so_far = z3.Solver()
-        #     eval("so_far.add"+condition)
-        #     for assertion in self.assertions:
-        #         eval("so_far.add("+assertion+")")
+        # Loop over elifs (if any) until we find a satisfiable one.
+        cur_orelse = node.orelse
+        while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
+            before = copy.copy(global_vars) # snapshot
+            # Having to hard index into a list like this is terrible, clean up later
+            # Build the test condition, substitute any variables
+            # condition = codegen.to_source(cur_orelse[0].test)
+            # for key in self.which:
+            #     condition = re.sub(key, self.local_vars[self.which[key]], condition)
 
-        #     if str(so_far.check()) == 'sat':
+            # Visit body
+            elif_visitor = Z3Visitor()
+            for elem in cur_orelse[0].body:
+                elif_visitor.visit(elem)
 
-        #         print("visiting elif-body")
-        #         # Visit body
-        #         for elem in cur_orelse[0].body:
-        #             elif_visitor.visit(elem)
+            after = copy.copy(global_vars) # snapshot
 
-        #     # Iterate
-        #     cur_orelse = cur_orelse[0].orelse
+            for key in after:
+                if before[key] != after[key]:
+                    cur_var = after[key]
+                    incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+                    global_vars[key] = incremented
+                    exec("global "+incremented)
+                    exec(incremented+" = z3.Int('"+incremented+"')", globals())
 
-        # # Deal with the else statement (possibly empty)
-        # else_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
+                    exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
+                    z3_vars.append(incremented)
+                    z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
 
-        # for elem in cur_orelse:
-        #     else_visitor.visit(elem)
+
+            # Iterate
+            cur_orelse = cur_orelse[0].orelse
+
+        # Deal with the else statement (possibly empty)
+        before = copy.copy(global_vars) # snapshot
+
+        else_visitor = Z3Visitor()
+        for elem in cur_orelse:
+            else_visitor.visit(elem)
+
+        after = copy.copy(global_vars) # snapshot
+
+        for key in after:
+            if before[key] != after[key]:
+                cur_var = after[key]
+                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+                global_vars[key] = incremented
+                exec("global "+incremented)
+                exec(incremented+" = z3.Int('"+incremented+"')", globals())
+
+                exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
+                z3_vars.append(incremented)
+                z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
+
 
 
 
@@ -308,7 +338,7 @@ print ("\nvars", len(z3_vars))
 for var in sorted(z3_vars):
     print(var)
 print ("\ncalls", len(z3_calls))
-for call in sorted(z3_calls):
+for call in z3_calls:
     print (call)
 
 # print(global_solver)
