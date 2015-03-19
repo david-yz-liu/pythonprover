@@ -1,7 +1,7 @@
 
 def f(x): 
 
-	# requires(x < 2)
+	requires(x < 2)
 	x += 1
 	if x == 3:
 		x = 2
@@ -25,20 +25,6 @@ def f(x):
 	# t %= 3 #  Modulus
 	# t += j #  Referencing variable with an unknown value
 
-# 	return x
+	# 	return x
 
-	# assures(x > 0)
-
-# # z = Int('z')
-# # s = Solver()
-# # ...
-# # s.add(mydict['z3'] > 5)
-# # s.solve()
-# # 'sat'
-
-# # x1 : ((x) + 4+4)
-
-# # x2 : ((x) + 4) + 5
-# # x1 : (x) + 4
-# # x2 : (((x) + 4) + 5)
-# # x1 : (x) + 4
+	assures(x > 0)

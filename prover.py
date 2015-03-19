@@ -1,51 +1,68 @@
+
+'''
+/////////////////////////////////// RULES //////////////////////////////////////
+1. In the users code, Pre-conditions must be declared after the function
+definition line 'def f(x):', because the z3 variables referenced in the 
+pre/post condition calls are instantiated when the function def line is parsed. 
+
+2. Post conditions must be declared after the function body, because we must first
+read through the body to see how variables are modified. 
+
+/////////////////////////////////// NOTES //////////////////////////////////////
+1. Variables and their values are added to the local dictionary:
+    - upon any assignment
+    - upon reading the parameters of a FunctionDef Node
+
+////////////////////////////////// WARNINGS ////////////////////////////////////
+codegen.to_source doesn't not always acurately return the correct sourec
+for the ast node it's called on. It returns nothing when reading 'True' or 'False'
+and will not fill in function def paramenters codegen.to_source('f(x,y)') == f( , )
+
+//////////////////////////////////// TODO //////////////////////////////////////
+if statements
+    - condition implies new var == final var at end of body
+    - new var = Or (final var at end of if, final var at end of else)
+Find a way out of hard indexing into orelse nodes in an ast.if Node
+'''
+
 import ast
+from ast import *
 import astpp
 import sys
-from ast import *
 import imp
 import re
+import copy
 from pprint import pprint
 from operator import itemgetter
-import copy
-# import z3
-# from z3 import *
-# import codegen 
-# from codegen import *
 
 # Codegen
 codegen = imp.load_source('codegen', '/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/codegen/codegen.py')
-
 # Z3
-# sys.path.append('/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/')
 sys.path.append('/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/bin/')
 z3 = imp.load_source('z3.py', '/Library/Frameworks/Python.framework/Versions/3.4/lib/Python3.4/z3/bin/z3.py')
 
+# The solver in which all z3 assertions go
 global_solver = z3.Solver()
+# Dictionary that keeps track of the current version of a variable
+# e.g. {x : x, y : y3}
 global_vars = {}
 
-# Since print(<z3.Solver()>) doesn't work, use this list to debug/keep track of what's in the solver
+# Since print(<z3.Solver()>) doesn't work, use these lists to
+# debug/keep track of what's in the solver
 z3_calls = []
 z3_vars = []
 
-
-# TODO:
-# variable instantiation 
-#     - declare new incremented variable
-#     - assert its relationship to the old one
-# if statements
-#     - condition implies new var == final var at end of body
-#     - new var = Or (final var at end of if, final var at end of else)
-#     - NEED: final vars for each
-#             before var
-#             after var
-
 def pretty_print_dic(dictionary):
-    # exec("print('"+str(dictionary)+"'')") # Print name of dictionary
+    """
+    Print a dictionary out in a readable format
+    """
     for k, v in sorted(dictionary.items(), key=itemgetter(1)):
         print (k, ":", v)
 
-''' return the ast.Return node of the given ast.FunctionDef node, if there is one'''
 def get_return(node):
+    """
+    Return the AST Return Node of the given AST FunctionDef Node, if there is one
+    """
     if not isinstance(node, FunctionDef):
         raise TypeError('expected FunctionDef, got %r' % node.__class__.__name__)
     
@@ -53,8 +70,10 @@ def get_return(node):
         if isinstance(sub_elem, ast.Return):
             return sub_elem.value
 
-''' Return a the list of parameters reuired by the given function'''
 def get_func_args(node):
+    """
+    Return a the list of parameters taken by the given AST functionDef Node
+    """
     if not isinstance(node, FunctionDef):
         raise TypeError('expected FunctionDef, got %r' % node.__class__.__name__)
     
@@ -66,8 +85,35 @@ def get_func_args(node):
 
     return args
 
-''' The main thing '''
+def calculate_conditional_vars(before, after):
+    """ 
+    Determine which variables are changed by a if-elif-else block
+    and create new incremented variables that evaluates to either 
+    the original value, or the value produced by the if-elif-else block. 
+    These new variables effectively represent the if-elif-else block
+    """
+    for key in after:
+        if before[key] != after[key]:
+            cur_var = after[key]
+            # create a new incremented variable based off of 'target'
+            incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+            # Update variable dictionary
+            global_vars[key] = incremented
+            # Declare new z3 variable
+            exec("global "+incremented)
+            exec(incremented+" = z3.Int('"+incremented+"')", globals())
+            # Give it the two possible values
+            exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
+
+            # Track new vars and assertions for debugging purposes
+            z3_vars.append(incremented)
+            z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
+
 class Z3Visitor(ast.NodeVisitor):
+    """
+    The main thing! Reads over an AST and determines if the program the AST 
+    represents is satisfiable.
+    """
 
     def visit_For(self, node):
         pass
@@ -76,15 +122,18 @@ class Z3Visitor(ast.NodeVisitor):
         pass
 
     def visit_If(self, node):
-
+        """
+        Visit an if-elif-else block. For each condition, create a Z3Visitor 
+        to visit said condition's body (and recurse into any nested 
+        if-conditions/loops etc. if necessary)
+        """
         # rebuild the condition with variable substitution from local_vars
-        # condition = codegen.to_source(node.test)
-        # for key in global_vars:
-        #     condition = re.sub(key, global_vars[key], condition)
-
+        condition = codegen.to_source(node.test)
+        for key in global_vars:
+            condition = re.sub(key, global_vars[key], condition)
 
         # Take a snapshot of the variable set before entering the if-elif-else block
-        before = copy.copy(global_vars)
+        before = copy.copy(global_vars) # snapshot
         
         # Create a visitor to visit the if-elif-else block
         if_visitor = Z3Visitor()
@@ -93,118 +142,77 @@ class Z3Visitor(ast.NodeVisitor):
             if_visitor.visit(elem)
 
         # Take a snapshot of the variable set after exiting the if-elif-else block
-        after = copy.copy(global_vars)
-        # print("before", before)
-        # print("after", after)
-        # Check which variables have changed, create new incremented variables that
-        # are either the old or the new value. This represents the if-elif-else block
-        for key in after:
-            if before[key] != after[key]:
-                cur_var = after[key]
-                # create a new incremented variable based off of 'target'
-                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                # Update variable dictionary
-                global_vars[key] = incremented
-                # Declare new z3 variable
-                exec("global "+incremented)
-                exec(incremented+" = z3.Int('"+incremented+"')", globals())
-
-                exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
-                z3_vars.append(incremented)
-                z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
+        after = copy.copy(global_vars) # snapshot 
+        
+        calculate_conditional_vars(before, after)
 
         # Loop over elifs (if any) until we find a satisfiable one.
         cur_orelse = node.orelse
         while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
             before = copy.copy(global_vars) # snapshot
-            # Having to hard index into a list like this is terrible, clean up later
             # Build the test condition, substitute any variables
-            # condition = codegen.to_source(cur_orelse[0].test)
-            # for key in self.which:
-            #     condition = re.sub(key, self.local_vars[self.which[key]], condition)
+            condition = codegen.to_source(cur_orelse[0].test)
+            for key in global_vars:
+                condition = re.sub(key, global_vars[key], condition)
 
             # Visit body
             elif_visitor = Z3Visitor()
             for elem in cur_orelse[0].body:
                 elif_visitor.visit(elem)
 
-            after = copy.copy(global_vars) # snapshot
+            after = copy.copy(global_vars)
 
-            for key in after:
-                if before[key] != after[key]:
-                    cur_var = after[key]
-                    incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                    global_vars[key] = incremented
-                    exec("global "+incremented)
-                    exec(incremented+" = z3.Int('"+incremented+"')", globals())
-
-                    exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
-                    z3_vars.append(incremented)
-                    z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
-
+            calculate_conditional_vars(before, after)
 
             # Iterate
             cur_orelse = cur_orelse[0].orelse
 
         # Deal with the else statement (possibly empty)
-        before = copy.copy(global_vars) # snapshot
+        before = copy.copy(global_vars)
 
         else_visitor = Z3Visitor()
         for elem in cur_orelse:
             else_visitor.visit(elem)
 
-        after = copy.copy(global_vars) # snapshot
+        after = copy.copy(global_vars)
 
-        for key in after:
-            if before[key] != after[key]:
-                cur_var = after[key]
-                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                global_vars[key] = incremented
-                exec("global "+incremented)
-                exec(incremented+" = z3.Int('"+incremented+"')", globals())
-
-                exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
-                z3_vars.append(incremented)
-                z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
-
-
-
+        calculate_conditional_vars(before, after)
 
     def visit_IfExpr(self, node):
+        """ 
+        Visit an if-condition of the form: a if b else c
+        """
         pass
-        # An expression such as a if b else c
 
     def visit_Expr(self, node):
-        # check for 'requires(...)' and 'assures(...)''
+        """ 
+        Visit an expression, currently this function only looks at
+        'requires(...)' and 'assures(...)' expressions. More soon!
+        """
         # can probably optimize this function by merging both cases
         if isinstance(node.value, ast.Call) and \
             isinstance(node.value.func, ast.Name):
-            if node.value.func.id == 'requires':
-                # Uncompile 'bodyx' in 'requires(body1, body2, ...) for all x
+            if node.value.func.id == 'requires' or node.value.func.id == 'assures':
+                # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
                 for condition in node.value.args:
                     body = codegen.to_source(condition)
-                    # self.assertions.append(body)
-                    # eval("self.solver.add"+body)
-                    print ("s.add"+body)
+                    z3_calls.append(body)
 
-            elif node.value.func.id == 'assures':
-                # Uncompile 'bodyx' in 'assures(body1, body2, ...) for all x
-                for condition in node.value.args:
-                    body = codegen.to_source(condition)
+                    if node.value.func.id == 'assures':
+                        for key in global_vars:
+                            body = re.sub(key, global_vars[key], body)
+                    # Add assersion to the global solver
+                    eval("global_solver.add"+body)
 
-                    # Substitute variables in body with the corresponding value
-                    # found in the global variable dictionary
-                    for key in global_vars:
-                        body = re.sub(key, global_vars[key], body)
-
-                    # eval("self.solver.add"+body)
-                    # self.assertions.append(body)
-                    print ("s.add"+body)
+                    z3_calls.append(body)
         else:
             print ("Expr:", codegen.to_source(node))
 
-    ''' Update/Add to the local_vars dictionary to reflect the latest assignment'''
     def visit_Assign(self, node):
+        """
+        Update/Add to the global variable dictionary and the global solver 
+        to reflect the latest assignment
+        """
         LHS = node.targets[0] # left hand side (Name or Tuple obj)
         RHS = node.value # right hand side
 
@@ -225,10 +233,13 @@ class Z3Visitor(ast.NodeVisitor):
 
         for target in targets:
             if target not in global_vars: # New variable
+                # Add to variable dictionary
                 global_vars[target] = target
+
                 exec("global "+target)
                 exec(target+" = z3.Int('"+target+"')", globals())
                 exec("global_solver.add("+target+" == "+body+")")
+
                 z3_vars.append(target)
                 z3_calls.append(target+" == "+body)
 
@@ -238,6 +249,7 @@ class Z3Visitor(ast.NodeVisitor):
                 incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
                 # Update variable dictionary
                 global_vars[target] = incremented
+
                 # Declare incremented as z3 object
                 exec("global "+incremented)
                 exec(incremented+" = z3.Int('"+incremented+"')", globals())
@@ -247,11 +259,11 @@ class Z3Visitor(ast.NodeVisitor):
                 z3_vars.append(incremented)
                 z3_calls.append(incremented+" == "+body)
 
-
-    ''' Will be used to check for calls to functions we have instantiated z3
-        equivalents to, and call those equivalents with the given arguments'''
-
     def visit_AugAssign(self, node):
+        """
+        Update/Add to the global variable dictionary and the global solver 
+        to reflect the latest assignment
+        """
         target = node.target.id
         cur_var = global_vars[node.target.id] # The current incremented variable representing target
 
@@ -277,7 +289,6 @@ class Z3Visitor(ast.NodeVisitor):
 
         # Build the new variable's relationship with its predecessor
         body = cur_var+" "+operator+" "+RHS
-
         # Create a new incremented variable based off of 'target'
         incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
         # Update the variable dictionary
@@ -293,11 +304,12 @@ class Z3Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node):
         pass
-        # print ("Call:", codegen.to_source(node))
 
     def visit_FunctionDef(self, node):
-        
-        # print ("Func:", codegen.to_source(node)) # This blows up for some reason
+        """
+        Declare parameters as z3 variables. Create new Z3Visitor to visit each 
+        element in the functionDef body
+        """
 
         arg_list = get_func_args(node)
 
@@ -315,7 +327,7 @@ class Z3Visitor(ast.NodeVisitor):
             func_visitor.visit(elem)
 
     def visit_Return(self, node):
-        print ("Return:", codegen.to_source(node))
+        pass
 
 
 with open (sys.argv[1], "r") as myfile:
@@ -327,54 +339,19 @@ print ("------- original -------")
 print (astpp.dump(tree))
 
 # Visit AST and aggregate Z3 function calls
-my_visitor = Z3Visitor()
-my_visitor.visit(tree)
+source_visitor = Z3Visitor()
+source_visitor.visit(tree)
 
+# Debug print-out calls
 result = global_solver.check()
 print ("RESULT:", result)
-print ("vars")
-print(global_vars)
+
+print ("vars\n", global_vars)
+
 print ("\nvars", len(z3_vars))
 for var in sorted(z3_vars):
     print(var)
+
 print ("\ncalls", len(z3_calls))
 for call in z3_calls:
     print (call)
-
-# print(global_solver)
-# print(global_solver.model())
-
-# if (result):
-#     m = s.model()
-#     print("Model: ", m)
-
-# Testing validity: Requires building a function of the form:
-'''
-def prove(f):
-s = Solver()
-s.add(Not(f))
-if s.check() == unsat:
-print "proved"
-else:
-print "failed to prove"
-'''
-
-'''
-////////////////////////////// RULES /////////////////////////////////
-1. In the users code, Pre-conditions must be declared after the function
-definition line 'def f(x):', because the z3 variables referenced in the 
-pre/post condition calls are instantiated when the function def line is parsed. 
-
-2. Post conditions must be declared after the function body, because we must first
-read through the body to see how variables are modified. 
-
-////////////////////////////// NOTES /////////////////////////////////
-1. Variables and their values are added to the local dictionary:
-    - upon any assignment
-    - upon reading the arguments of a FunctionDef
-
-//////////////////////////// WARNINGS ///////////////////////////////
-codegen.to_source does return nothing when reading 'True' or 'False'
-and will not fill in function def paramenters codegen.to_source('f(x,y)') == f( , )
-
-'''
