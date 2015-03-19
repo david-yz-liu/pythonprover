@@ -23,7 +23,7 @@ z3 = imp.load_source('z3.py', '/Library/Frameworks/Python.framework/Versions/3.4
 global_solver = z3.Solver()
 global_vars = {}
 
-# Since print(<z3.Solver()>) doesn't work, use this list to debug/keep trak of what's in the solver
+# Since print(<z3.Solver()>) doesn't work, use this list to debug/keep track of what's in the solver
 z3_calls = []
 z3_vars = []
 
@@ -78,72 +78,66 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_If(self, node):
 
         # rebuild the condition with variable substitution from local_vars
-        condition = codegen.to_source(node.test)
-        for key in self.which:
-            condition = re.sub(key, self.local_vars[self.which[key]], condition)
+        # condition = codegen.to_source(node.test)
+        # for key in global_vars:
+        #     condition = re.sub(key, global_vars[key], condition)
 
-        # Create a visitor to visit the if-condition, and maybe its body
-        if_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
 
-        # Add existing z3 assertions
-        so_far = z3.Solver()
-        eval("so_far.add"+condition)
-        for assertion in self.assertions:
-            eval("so_far.add("+assertion+")")
+        # Take a snapshot of the variable set before entering the if-elif-else block
+        before = copy.copy(global_vars)
+        
+        # Create a visitor to visit the if-elif-else block
+        if_visitor = Z3Visitor()
+        # Visit body
+        for elem in node.body:
+            if_visitor.visit(elem)
 
-        # If the if-condition is true, visit the body
-        if str(so_far.check()) == 'sat':
-            print("visiting if-body")
-            # Visit body
-            for elem in node.body:
-                if_visitor.visit(elem)
+        # Take a snapshot of the variable set after exiting the if-elif-else block
+        after = copy.copy(global_vars)
+        print("before", before)
+        print("after", after)
+        # Check which variables have changed, create new incremented variables that
+        # are either the old or the new value. This represents the if-elif-else block
+        for key in after:
+            if before[key] != after[key]:
+                cur_var = after[key]
+                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+                global_vars[incremented] = "OR("+before[key]+", "+after[key]+")"
+                print("OR("+before[key]+", "+after[key]+")")
 
-            # Update class info
-            self.local_vars.update(if_visitor.local_vars) # Add any new variable
-            self.which.update(if_visitor.which) # Update the current version of each variable
-            return # Do not bother reading any following elif/else conditions
+        # # Loop over elifs (if any) until we find a satisfiable one.
+        # cur_orelse = node.orelse
+        # while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
+        #     print("**********\ncur_orelse", cur_orelse)
+        #     # Having to index into a list like this is terrible, clean up later
+        #     # Build the test condition, substitute any variables
+        #     condition = codegen.to_source(cur_orelse[0].test)
+        #     for key in self.which:
+        #         condition = re.sub(key, self.local_vars[self.which[key]], condition)
 
-        # Loop over elifs (if any) until we find a satisfiable one.
-        cur_orelse = node.orelse
-        while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
-            print("**********\ncur_orelse", cur_orelse)
-            # Having to index into a list like this is terrible, clean up later
-            # Build the test condition, substitute any variables
-            condition = codegen.to_source(cur_orelse[0].test)
-            for key in self.which:
-                condition = re.sub(key, self.local_vars[self.which[key]], condition)
+        #     # Create solver, check condition, execute body if condition is true - same as above with If
+        #     elif_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
+        #     so_far = z3.Solver()
+        #     eval("so_far.add"+condition)
+        #     for assertion in self.assertions:
+        #         eval("so_far.add("+assertion+")")
 
-            # Create solver, check condition, execute body if condition is true - same as above with If
-            elif_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
-            so_far = z3.Solver()
-            eval("so_far.add"+condition)
-            for assertion in self.assertions:
-                eval("so_far.add("+assertion+")")
+        #     if str(so_far.check()) == 'sat':
 
-            if str(so_far.check()) == 'sat':
+        #         print("visiting elif-body")
+        #         # Visit body
+        #         for elem in cur_orelse[0].body:
+        #             elif_visitor.visit(elem)
 
-                print("visiting elif-body")
-                # Visit body
-                for elem in cur_orelse[0].body:
-                    elif_visitor.visit(elem)
+        #     # Iterate
+        #     cur_orelse = cur_orelse[0].orelse
 
-                # Update class attributes
-                self.local_vars.update(elif_visitor.local_vars) # Add any new variable
-                self.which.update(elif_visitor.which) # Update the current version of each variable
-                return # Do not bother reading any following elif/else conditions
+        # # Deal with the else statement (possibly empty)
+        # else_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
 
-            # Iterate
-            cur_orelse = cur_orelse[0].orelse
+        # for elem in cur_orelse:
+        #     else_visitor.visit(elem)
 
-        # Deal with the else statement (possibly empty)
-        else_visitor = Z3Visitor(copy.copy(self.local_vars), copy.copy(self.which), copy.copy(self.assertions))
-
-        for elem in cur_orelse:
-            else_visitor.visit(elem)
-
-        # Update class attributes
-        self.local_vars.update(else_visitor.local_vars) # Add any new variable
-        self.which.update(else_visitor.which) # Update the current version of each variable
 
 
     def visit_IfExpr(self, node):
@@ -159,7 +153,7 @@ class Z3Visitor(ast.NodeVisitor):
                 # Uncompile 'bodyx' in 'requires(body1, body2, ...) for all x
                 for condition in node.value.args:
                     body = codegen.to_source(condition)
-                    self.assertions.append(body)
+                    # self.assertions.append(body)
                     # eval("self.solver.add"+body)
                     print ("s.add"+body)
 
@@ -170,11 +164,11 @@ class Z3Visitor(ast.NodeVisitor):
 
                     # Substitute variables in body with the corresponding value
                     # found in the global variable dictionary
-                    for key in self.which:
-                        body = re.sub(key, self.local_vars[self.which[key]], body)
+                    for key in global_vars:
+                        body = re.sub(key, global_vars[key], body)
 
                     # eval("self.solver.add"+body)
-                    self.assertions.append(body)
+                    # self.assertions.append(body)
                     print ("s.add"+body)
         else:
             print ("Expr:", codegen.to_source(node))
@@ -286,7 +280,7 @@ class Z3Visitor(ast.NodeVisitor):
                 z3_vars.append(arg)
 
         # Visit function body and build z3 representation
-        func_visitor = Z3Visitor(self.local_vars, self.which, self.assertions)
+        func_visitor = Z3Visitor()
         for elem in node.body:
             func_visitor.visit(elem)
 
@@ -303,11 +297,13 @@ print ("------- original -------")
 print (astpp.dump(tree))
 
 # Visit AST and aggregate Z3 function calls
-my_visitor = Z3Visitor({}, {})
+my_visitor = Z3Visitor()
 my_visitor.visit(tree)
 
 result = global_solver.check()
 print ("RESULT:", result)
+print ("vars")
+print(global_vars)
 print ("\nvars", len(z3_vars))
 for var in sorted(z3_vars):
     print(var)

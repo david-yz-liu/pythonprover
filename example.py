@@ -1,12 +1,12 @@
 
-def f(x, y, j): 
+def f(x): 
 
-	requires(x < 2)
+	# requires(x < 2)
+	x += 1
+	if x == 3:
+		x = (-10)
+	x *= 3
 
-	x = 4
-
-	# if x == 3:
-	# 	x = (-10)
 	# elif x == 4:
 	# 	x = 22222
 	# else:
@@ -18,18 +18,18 @@ def f(x, y, j):
 	# b = x + y # Assignment from other variables
 	# x, y, z, t = 14 # Multiple assignments on one line
 	# a = b = 111 # Multiple assignment
-	t = 1
-	# Augmented assignments
-	x += 5 # Num object
-	t *= x # Name object
-	t -= (y + j) # with BinOp object
-	x = 11 # TODO simple assignments at end
-	t %= 3 #  Modulus
-	t += j #  Referencing variable with an unknown value
+	# t = 1
+	# # Augmented assignments
+	# x += 5 # Num object
+	# t *= x # Name object
+	# t -= (y + j) # with BinOp object
+	# x = 11 # TODO simple assignments at end
+	# t %= 3 #  Modulus
+	# t += j #  Referencing variable with an unknown value
 
 # 	return x
 
-	assures(x > 0)
+	# assures(x > 0)
 
 # # z = Int('z')
 # # s = Solver()
