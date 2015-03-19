@@ -127,6 +127,11 @@ class Z3Visitor(ast.NodeVisitor):
         to visit said condition's body (and recurse into any nested 
         if-conditions/loops etc. if necessary)
         """
+        # Key: condition
+        # Value: State of global vars (at this point in execution) if condition satisfied
+        after_var_sets = {}
+
+        # If:
         # rebuild the condition with variable substitution from local_vars
         condition = codegen.to_source(node.test)
         for key in global_vars:
@@ -146,6 +151,9 @@ class Z3Visitor(ast.NodeVisitor):
         
         calculate_conditional_vars(before, after)
 
+        after_var_sets[condition] = after
+
+        # Elifs:
         # Loop over elifs (if any) until we find a satisfiable one.
         cur_orelse = node.orelse
         while len(cur_orelse) == 1 and isinstance(cur_orelse[0], ast.If): # i.e. another elif. other possibilities: [] == no else statement, [NodeA, nodeB, ...] == else body
@@ -164,9 +172,12 @@ class Z3Visitor(ast.NodeVisitor):
 
             calculate_conditional_vars(before, after)
 
+            after_var_sets[condition] = after
+
             # Iterate
             cur_orelse = cur_orelse[0].orelse
 
+        # Else:
         # Deal with the else statement (possibly empty)
         before = copy.copy(global_vars)
 
@@ -177,6 +188,21 @@ class Z3Visitor(ast.NodeVisitor):
         after = copy.copy(global_vars)
 
         calculate_conditional_vars(before, after)
+
+        # Add assertions to the solver equivalent to the if-elif-else conditions and their bodies
+        for condition in after_var_sets:
+            after_dic = after_var_sets[condition]
+
+            #Build list of variables that would be equal if condition were true
+            var_equivalencies = []
+            for var in global_vars:
+                if var in after_dic:
+                    var_equivalencies.append(var+" == "+after_dic[var])
+            var_equivalencies_str = ", ".join(var_equivalencies)
+
+            # Assert that if the condition is true, the variables are equal
+            exec("global_solver.add(z3.Implies("+condition+", z3.And("+var_equivalencies_str+")))")
+            z3_calls.append("z3.Implies("+condition+", z3.And("+var_equivalencies_str+"))")
 
     def visit_IfExpr(self, node):
         """ 

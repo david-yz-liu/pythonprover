@@ -1,10 +1,12 @@
 
 def f(x): 
 
+	y = 1
 	requires(x < 2)
 	x += 1
 	if x == 3:
 		x = 2
+		y += 2
 	elif x == 4:
 		x = 4
 	else:
