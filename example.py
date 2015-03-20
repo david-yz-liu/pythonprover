@@ -1,32 +1,21 @@
 
 def f(x): 
 
-	y = 1
 	requires(x < 2)
-	x += 1
-	if x == 3:
-		x = 2
-		y += 2
-	elif x == 4:
-		x = 4
+	x = 1 # x1
+	if x == 1:
+		x +=2 # x2
+		if x == 2:
+			x += 3 # x3
+		# x4 = (x2 or x3) 
+		x += 5 # x5
+		# x6 = (x1 or x5)
+	elif x == 6:
+		x = 7
+		# x8 = (x6 or x7)
 	else:
-		x = 6
-	x += 8
-	# x = x - 10 # multiple modifications in a row (checking the correct creation of new xn vars)	# x = x / 2
-
-	# pie = 3.14 # declaration of new variable
-	# b = x + y # Assignment from other variables
-	# x, y, z, t = 14 # Multiple assignments on one line
-	# a = b = 111 # Multiple assignment
-	# t = 1
-	# # Augmented assignments
-	# x += 5 # Num object
-	# t *= x # Name object
-	# t -= (y + j) # with BinOp object
-	# x = 11 # TODO simple assignments at end
-	# t %= 3 #  Modulus
-	# t += j #  Referencing variable with an unknown value
-
-	# 	return x
+		x = 9
+	# x10 = (x8 or x9)
+	x += 11
 
 	assures(x > 0)

@@ -197,7 +197,7 @@ class Z3Visitor(ast.NodeVisitor):
             var_equivalencies = []
             for var in global_vars:
                 if var in after_dic:
-                    var_equivalencies.append(var+" == "+after_dic[var])
+                    var_equivalencies.append(global_vars[var]+" == "+after_dic[var])
             var_equivalencies_str = ", ".join(var_equivalencies)
 
             # Assert that if the condition is true, the variables are equal
@@ -222,7 +222,6 @@ class Z3Visitor(ast.NodeVisitor):
                 # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
                 for condition in node.value.args:
                     body = codegen.to_source(condition)
-                    z3_calls.append(body)
 
                     if node.value.func.id == 'assures':
                         for key in global_vars:
@@ -230,7 +229,7 @@ class Z3Visitor(ast.NodeVisitor):
                     # Add assersion to the global solver
                     eval("global_solver.add"+body)
 
-                    z3_calls.append(body)
+                    z3_calls.append(body[1:-1])
         else:
             print ("Expr:", codegen.to_source(node))
 
@@ -374,9 +373,9 @@ print ("RESULT:", result)
 
 print ("vars\n", global_vars)
 
-print ("\nvars", len(z3_vars))
-for var in sorted(z3_vars):
-    print(var)
+# print ("\nvars", len(z3_vars))
+# for var in sorted(z3_vars):
+#     print(var)
 
 print ("\ncalls", len(z3_calls))
 for call in z3_calls:
