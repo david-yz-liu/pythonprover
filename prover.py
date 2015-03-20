@@ -23,6 +23,7 @@ if statements
     - condition implies new var == final var at end of body
     - new var = Or (final var at end of if, final var at end of else)
 Find a way out of hard indexing into orelse nodes in an ast.if Node
+Change way if-expressions are handled - currently only accessable from with visit_Assign
 '''
 
 import ast
@@ -140,7 +141,7 @@ class Z3Visitor(ast.NodeVisitor):
         # Take a snapshot of the variable set before entering the if-elif-else block
         before = copy.copy(global_vars) # snapshot
         
-        # Create a visitor to visit the if-elif-else block
+        # Create a visitor to visit the if-block
         if_visitor = Z3Visitor()
         # Visit body
         for elem in node.body:
@@ -204,12 +205,31 @@ class Z3Visitor(ast.NodeVisitor):
             exec("global_solver.add(z3.Implies("+condition+", z3.And("+var_equivalencies_str+")))")
             z3_calls.append("z3.Implies("+condition+", z3.And("+var_equivalencies_str+"))")
 
-    def visit_IfExpr(self, node):
+    def visit_IfExp(self, node):
         """ 
         Visit an if-condition of the form: a if b else c
+        Currently called only from visit_Assign and returns to there.
+        Makes no z3 calls of its own
         """
-        pass
+        # rebuild the condition with variable substitution from local_vars
+        condition = codegen.to_source(node.test)
+        for key in global_vars:
+            condition = re.sub(key, global_vars[key], condition)
+        
+        # Assemble 'else' body
+        if_body = codegen.to_source(node.body)
+        for key in global_vars:
+            # substitute any variables with their present incremented variable
+            if_body = re.sub(key, global_vars[key], if_body)
+        
+        # Assemble 'if' body
+        else_body = codegen.to_source(node.orelse)
+        for key in global_vars:
+            # substitute any variables with their present incremented variable
+            else_body = re.sub(key, global_vars[key], else_body)
 
+        return [condition, if_body, else_body]
+            
     def visit_Expr(self, node):
         """ 
         Visit an expression, currently this function only looks at
@@ -249,6 +269,51 @@ class Z3Visitor(ast.NodeVisitor):
         else: # assignment of form: x1 = x2 = ... = <RHS> for all xn where 0 < n
             for nameObj in node.targets: 
                 targets.append(nameObj.id)  
+
+        if isinstance(RHS, ast.IfExp):
+            ifExp_visitor = Z3Visitor() 
+            cond_if_else = (ifExp_visitor.visit(RHS))
+            print("RHS is ifExp")
+            cond = cond_if_else[0]
+            if_body = cond_if_else[1]
+            else_body = cond_if_else[2]
+
+            for target in targets:
+                if target not in global_vars: # New variable
+                    # Add to variable dictionary
+                    global_vars[target] = target
+
+                    exec("global "+target)
+                    exec(target+" = z3.Int('"+target+"')", globals())
+                    exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+
+                    z3_vars.append(target)
+                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+
+                else: # Existing variable
+                    cur_var = global_vars[target]
+                    # create a new incremented variable based off of 'target'
+                    incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+                    # Update variable dictionary
+                    global_vars[target] = incremented
+
+                    # Declare incremented as z3 object
+                    exec("global "+incremented)
+                    exec(incremented+" = z3.Int('"+incremented+"')", globals())
+                    # Declare the new variable's relationship with its predecessor
+                    exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+
+                    z3_vars.append(incremented)
+                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+
+            return
+        elif isinstance(RHS, ast.Call):
+            print("Error: Assignment from function calls not yet supported")
+            return
+        elif isinstance(RHS, ast.UnaryOp):
+            print("Error: Assignment from unary expressions not yet supported")
+            return
+        # Otherwise RHS is a Name, Num or Binop
 
         # assemble the right hand side of the assignment
         body = codegen.to_source(RHS)
@@ -360,15 +425,15 @@ with open (sys.argv[1], "r") as myfile:
 
 
 tree = ast.parse(data)
-print ("------- original -------")
+print ("------- Abstract Syntax Tree -------")
 print (astpp.dump(tree))
 
 # Visit AST and aggregate Z3 function calls
 source_visitor = Z3Visitor()
 source_visitor.visit(tree)
 
-# Debug print-out calls
-result = global_solver.check()
+print ("------- Debug print-out -------") 
+result = global_solver.check() 
 print ("RESULT:", result)
 
 print ("vars\n", global_vars)
