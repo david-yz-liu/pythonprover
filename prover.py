@@ -58,7 +58,7 @@ local_vars = {}
 
 # Since print(<z3.Solver()>) doesn't work, use these lists to
 # debug/keep track of what's in the solver
-z3_calls = {}
+z3_calls = []
 z3_vars = []
 
 def pretty_print_dic(dictionary):
@@ -101,8 +101,7 @@ def calculate_conditional_vars(before, after):
 
             # Track new vars and assertions for debugging purposes
             z3_vars.append(incremented)
-            # z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
-            z3_calls[incremented] = "Or("+before[key]+", "+after[key]+")"
+            z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -238,7 +237,7 @@ class Z3Visitor(ast.NodeVisitor):
 
             # Assert that if the condition is true, the variables are equal
             exec("global_solver.add(z3.Implies("+condition+", z3.And("+var_equivalencies_str+")))")
-            # z3_calls.append("z3.Implies("+condition+", z3.And("+var_equivalencies_str+"))")
+            z3_calls.append("z3.Implies("+condition+", z3.And("+var_equivalencies_str+"))")
 
     def visit_IfExp(self, node):
         """ 
@@ -287,7 +286,7 @@ class Z3Visitor(ast.NodeVisitor):
                         # Add assersion to the global solver
                         eval("global_solver.add"+body)
 
-                        # z3_calls.append(body[1:-1])
+                        z3_calls.append(body[1:-1])
             else: # function call
                 # call/apply z3 representation of this function
                 temp_visitor = Z3Visitor()
@@ -331,8 +330,7 @@ class Z3Visitor(ast.NodeVisitor):
                     exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                     z3_vars.append(target)
-                    # z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
-                    z3_calls[target] = "Or("+if_body+", "+else_body+")"
+                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                 else: # Existing variable
                     cur_var = local_vars[target]
@@ -348,8 +346,7 @@ class Z3Visitor(ast.NodeVisitor):
                     exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                     z3_vars.append(incremented)
-                    # z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
-                    z3_calls[target] = "Or("+if_body+", "+else_body+")"
+                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
             return
         elif isinstance(RHS, ast.Call):
@@ -379,9 +376,7 @@ class Z3Visitor(ast.NodeVisitor):
                 exec("global_solver.add("+target+" == "+body+")")
 
                 z3_vars.append(target)
-                # z3_calls.append(target+" == "+body)
-                z3_calls[target] = body
-
+                z3_calls.append(target+" == "+body)
 
             else: # Existing variable
                 cur_var = local_vars[target]
@@ -398,8 +393,7 @@ class Z3Visitor(ast.NodeVisitor):
                 exec("global_solver.add("+incremented+" == "+body+")")
 
                 z3_vars.append(incremented)
-                # z3_calls.append(incremented+" == "+body)
-                z3_calls[incremented] = body
+                z3_calls.append(incremented+" == "+body)
 
     def visit_AugAssign(self, node):
         """
@@ -442,9 +436,7 @@ class Z3Visitor(ast.NodeVisitor):
         exec("global_solver.add("+incremented+" == "+body+")")
 
         z3_vars.append(incremented)
-        # z3_calls.append(incremented+" == "+body)
-        z3_calls[target] = body
-
+        z3_calls.append(incremented+" == "+body)
 
     def visit_FunctionDef(self, node):
         """
@@ -466,11 +458,23 @@ class Z3Visitor(ast.NodeVisitor):
         return_val = None
         # TODO: Make this find all returns in a function
         if isinstance(node.body[-1], ast.Return):
-            return_val = node.body[-1]
+            # this assumes return_val is variable, not expression
+            # TODO: handle expressions (or other types) in return
+            return_val = local_vars[node.body[-1].value.id]
 
-        # this assumes return_val is variable, not expression
-        # TODO: handle expression (or other) in return
-        # incremented_return = local_vars[return_val]
+            arg_list = []
+            for elem in node.args.args:
+                arg_list.append(elem.arg)
+
+            arg_list_str = ", ".join(arg_list)
+
+            print ("global_vars\n", global_vars)
+            print ("local_vars\n", local_vars)
+
+            # global_solver.add(ForAll(['x', 'y'], f(x, y) == x1))
+
+            print("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
+            exec("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
 
 
         # Reset variables
@@ -479,8 +483,6 @@ class Z3Visitor(ast.NodeVisitor):
         # we will get conflicting assertions about them if we have more than one funciton def
         # need to keep iterating where we left off, but divorce any relation to
         # iterated vars used in prior funcitons
-
-        'ForAll([arg_list], f(x) == x + 1)' 
 
     def visit_Return(self, node):
         pass
@@ -515,4 +517,4 @@ print ("local_vars\n", local_vars)
 
 print ("\ncalls", len(z3_calls))
 for call in z3_calls:
-    print (call, ":", z3_calls[call])
+    print (call)

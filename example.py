@@ -1,12 +1,10 @@
-# def g(x):
-# 	return x + 1
-
-def f(x): 
-	x -= 3
-	x += 5
-	# for elem in [1 , 2, 3, 4, 5]:
-	# 	x += elem
+def g(x):
+	x += 1
 	return x
 
+def f(x): 
+	requires(x == 0)
 
-# f(3)
+	x = g(x)
+
+	assures(x == 2) #should fail
