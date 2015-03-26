@@ -155,11 +155,27 @@ class Z3Visitor(ast.NodeVisitor):
         print("\torelse", node.orelse)
         print()
 
-        # this assumes: range(x)
-        # TODO: handle range(x, y, z) (ie. optional args)
-        iter_range = int(node.iter.args[0].n)
+        # Get optional arguments, 
+        # TODO: Make this not horrible. 
+        # - pass range() source's range() args directly somehow
+        # - codegen?
+        # - lambda
+        range_args_len = len(node.iter.args)
 
+        if range_args_len == 1:
+            start = 0
+            end = node.iter.args[0].n
+            step = 1
+        elif range_args_len ==2:
+            start = node.iter.args[0].n
+            end = node.iter.args[1].n
+            step = 1
+        else:
+            start = node.iter.args[0].n
+            end = node.iter.args[1].n
+            step = node.iter.args[2].n
 
+        # declare itorator as z3 variable
         iterator = node.target.id
         local_vars[iterator] = iterator
         exec("global "+iterator)
@@ -167,11 +183,12 @@ class Z3Visitor(ast.NodeVisitor):
 
         loop_visitor = Z3Visitor()
 
-        for j in range(iter_range):
+        for j in range(start, end, step):
             # increment iterator
             incremented = increment_z3_var(iterator)
             exec("global_solver.add("+incremented+" == "+str(j)+")") 
             z3_calls.append(incremented+" == "+str(j))
+            
             # Execute body
             for body_node in node.body:
                 loop_visitor.visit(body_node)
@@ -401,7 +418,6 @@ class Z3Visitor(ast.NodeVisitor):
             else: # Existing variable
                 incremented = increment_z3_var(target)
                 # Declare the new variable's relationship with its predecessor
-                print("global_solver.add("+incremented+" == "+body+")")
                 exec("global_solver.add("+incremented+" == "+body+")")
 
                 z3_calls.append(incremented+" == "+body)
