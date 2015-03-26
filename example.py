@@ -1,10 +1,8 @@
-def g(x):
-	x += 1
-	return x
 
 def f(x): 
-	requires(x == 0)
+	requires(x == 1)
+	for i in range(4):
+		x += i
+	assures(x == 7)
 
-	x = g(x)
 
-	assures(x == 2) #should fail

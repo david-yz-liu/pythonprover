@@ -143,12 +143,39 @@ class Z3Visitor(ast.NodeVisitor):
         print("\torelse", node.orelse)
         print()
 
+        # this assumes: range(x)
+        # TODO: handle range(x, y, z) (ie. optional args)
+        iter_range = int(node.iter.args[0].n)
+
+
+        iterator = node.target.id
+        local_vars[iterator] = iterator
+        exec("global "+iterator)
+        exec(iterator+" = z3.Int('+iterator+')", globals())
+
+        loop_visitor = Z3Visitor()
+        for j in range(iter_range):
+
+            # increment iterator
+            cur_var = local_vars[iterator]
+            incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+            local_vars[iterator] = incremented
+            exec("global "+incremented)
+            exec(incremented+" = z3.Int('"+incremented+"')", globals())
+            exec("global_solver.add("+incremented+" == "+str(j)+")") 
+            z3_calls.append(incremented+" == "+str(j))
+
+            # Execute body
+            for body_node in node.body:
+                loop_visitor.visit(body_node)
+
+
     def visit_While(self, node):
         pass
 
     def visit_Call(self, node):
         # class Call(
-        print ("Class node: ")
+        print ("Call node: ")
         print ("\tfunc", node.func)
         print ("\targs", node.args)
         print ("\tkeywords", node.keywords)
@@ -269,9 +296,8 @@ class Z3Visitor(ast.NodeVisitor):
         Visit an expression, currently this function only looks at
         'requires(...)' and 'assures(...)' expressions. More soon!
         """
-        print("Expr node: {0}".format(node.value))
         if isinstance(node.value, ast.Call):
-            print("Call node {0} \n \targs: {1}\n\t{2}, {3}, {4}".format(node.value.func.id, node.value.args, node.value.keywords, node.value.starargs, node.value.kwargs))
+            # print("Call node {0} \n \targs: {1}\n\t{2}, {3}, {4}".format(node.value.func.id, node.value.args, node.value.keywords, node.value.starargs, node.value.kwargs))
             # class Call(func, args, keywords, starargs, kwargs)
             # consider moving this case entirely to visit_call
             if isinstance(node.value.func, ast.Name):
@@ -315,7 +341,7 @@ class Z3Visitor(ast.NodeVisitor):
         if isinstance(RHS, ast.IfExp):
             ifExp_visitor = Z3Visitor() 
             cond_if_else = (ifExp_visitor.visit(RHS))
-            print("RHS is ifExp")
+
             cond = cond_if_else[0]
             if_body = cond_if_else[1]
             else_body = cond_if_else[2]
@@ -347,13 +373,7 @@ class Z3Visitor(ast.NodeVisitor):
 
                     z3_vars.append(incremented)
                     z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
-
             return
-        elif isinstance(RHS, ast.Call):
-            temp_visitor = Z3Visitor()
-            temp_visitor.visit(RHS)
-
-            # print("Error: Assignment from function calls not yet supported")
 
         elif isinstance(RHS, ast.UnaryOp):
             print("Error: Assignment from unary expressions not yet supported")
@@ -456,7 +476,7 @@ class Z3Visitor(ast.NodeVisitor):
         # get return variable
         # represent it in terms of before variables
         return_val = None
-        # TODO: Make this find all returns in a function
+        # TODO: Make this find all returns in a function (not just final one)
         if isinstance(node.body[-1], ast.Return):
             # this assumes return_val is variable, not expression
             # TODO: handle expressions (or other types) in return
@@ -468,14 +488,7 @@ class Z3Visitor(ast.NodeVisitor):
 
             arg_list_str = ", ".join(arg_list)
 
-            print ("global_vars\n", global_vars)
-            print ("local_vars\n", local_vars)
-
-            # global_solver.add(ForAll(['x', 'y'], f(x, y) == x1))
-
-            print("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
-            exec("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
-
+            # print("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
 
         # Reset variables
         # local_vars = copy.copy(global_vars)
@@ -504,9 +517,9 @@ function_visitor.visit(tree)
 source_visitor = Z3Visitor()
 source_visitor.visit(tree)
 
-print ("------- Debug print-out -------") 
+print ("\n------- Debug print-out -------") 
 result = global_solver.check() 
-print ("RESULT:", result)
+print ("RESULT:", result, "\n")
 
 print ("global_vars\n", global_vars)
 print ("local_vars\n", local_vars)
