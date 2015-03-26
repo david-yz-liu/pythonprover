@@ -1,8 +1,5 @@
 
 def f(x): 
-	requires(x == 1)
-	for i in range(4):
-		x += i
-	assures(x == 7)
-
+	x = 1 if x == 3 else 0
+	x = 100 if x == 1 else 5
 

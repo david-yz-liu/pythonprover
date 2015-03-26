@@ -78,6 +78,24 @@ def get_return(node):
     for sub_elem in node.body:
         if isinstance(sub_elem, ast.Return):
             return sub_elem.value
+            
+def increment_z3_var(var):
+    """
+    Create a new incremented z3 variable
+    """
+    # get the most recent instance of the variable to be incremented
+    cur_var = local_vars[var]
+    # create a new incremented variable based off of 'target'
+    incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
+    # Update variable dictionary
+    local_vars[var] = incremented
+    # Declare incremented as z3 object
+    exec("global "+incremented)
+    exec(incremented+" = z3.Int('"+incremented+"')", globals())
+    # Track incremented for debugging purposes
+    z3_vars.append(incremented)
+
+    return incremented
 
 def calculate_conditional_vars(before, after):
     """ 
@@ -88,20 +106,14 @@ def calculate_conditional_vars(before, after):
     """
     for key in after:
         if before[key] != after[key]:
-            cur_var = after[key]
-            # create a new incremented variable based off of 'target'
-            incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-            # Update variable dictionary
-            local_vars[key] = incremented
-            # Declare new z3 variable
-            exec("global "+incremented)
-            exec(incremented+" = z3.Int('"+incremented+"')", globals())
+            incremented = increment_z3_var(key)
+            
             # Give it the two possible values
             exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
 
             # Track new vars and assertions for debugging purposes
-            z3_vars.append(incremented)
             z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
+
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -154,17 +166,12 @@ class Z3Visitor(ast.NodeVisitor):
         exec(iterator+" = z3.Int('+iterator+')", globals())
 
         loop_visitor = Z3Visitor()
-        for j in range(iter_range):
 
+        for j in range(iter_range):
             # increment iterator
-            cur_var = local_vars[iterator]
-            incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-            local_vars[iterator] = incremented
-            exec("global "+incremented)
-            exec(incremented+" = z3.Int('"+incremented+"')", globals())
+            incremented = increment_z3_var(iterator)
             exec("global_solver.add("+incremented+" == "+str(j)+")") 
             z3_calls.append(incremented+" == "+str(j))
-
             # Execute body
             for body_node in node.body:
                 loop_visitor.visit(body_node)
@@ -359,20 +366,13 @@ class Z3Visitor(ast.NodeVisitor):
                     z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                 else: # Existing variable
-                    cur_var = local_vars[target]
-                    # create a new incremented variable based off of 'target'
-                    incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                    # Update variable dictionary
-                    local_vars[target] = incremented
 
-                    # Declare incremented as z3 object
-                    exec("global "+incremented)
-                    exec(incremented+" = z3.Int('"+incremented+"')", globals())
+                    incremented = increment_z3_var(target)
                     # Declare the new variable's relationship with its predecessor
-                    exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+                    exec("global_solver.add(z3.Or("+incremented+" == "+if_body+", "+incremented+" == "+else_body+"))")
 
                     z3_vars.append(incremented)
-                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
+                    z3_calls.append("Or("+incremented+" == "+if_body+", "+incremented+" == "+else_body+"))")
             return
 
         elif isinstance(RHS, ast.UnaryOp):
@@ -399,20 +399,11 @@ class Z3Visitor(ast.NodeVisitor):
                 z3_calls.append(target+" == "+body)
 
             else: # Existing variable
-                cur_var = local_vars[target]
-                # create a new incremented variable based off of 'target'
-                incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-                # Update variable dictionary
-                local_vars[target] = incremented
-
-                # Declare incremented as z3 object
-                exec("global "+incremented)
-                exec(incremented+" = z3.Int('"+incremented+"')", globals())
+                incremented = increment_z3_var(target)
                 # Declare the new variable's relationship with its predecessor
                 print("global_solver.add("+incremented+" == "+body+")")
                 exec("global_solver.add("+incremented+" == "+body+")")
 
-                z3_vars.append(incremented)
                 z3_calls.append(incremented+" == "+body)
 
     def visit_AugAssign(self, node):
@@ -421,7 +412,6 @@ class Z3Visitor(ast.NodeVisitor):
         to reflect the latest assignment
         """
         target = node.target.id
-        cur_var = local_vars[node.target.id] # The current incremented variable representing target
 
         RHS = codegen.to_source(node.value)
         # Rebuild RHS: Substitute the dictionary value of each variable
@@ -444,18 +434,13 @@ class Z3Visitor(ast.NodeVisitor):
             return
 
         # Build the new variable's relationship with its predecessor
-        body = cur_var+" "+operator+" "+RHS
-        # Create a new incremented variable based off of 'target'
-        incremented = cur_var[:1] + str(eval(cur_var[1:]+ "+ 1"))
-        # Update the variable dictionary
-        local_vars[target] = incremented
-        # Declare incremented as z3 object
-        exec("global "+incremented)
-        exec(incremented+" = z3.Int('"+incremented+"')", globals())
+        body = local_vars[target]+" "+operator+" "+RHS
+        
+        incremented = increment_z3_var(target)
+
         # Declare the new variable's relationship with its predecessor
         exec("global_solver.add("+incremented+" == "+body+")")
 
-        z3_vars.append(incremented)
         z3_calls.append(incremented+" == "+body)
 
     def visit_FunctionDef(self, node):
