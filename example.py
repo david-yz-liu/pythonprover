@@ -1,7 +1,6 @@
 
 def f(x): 
 	requires(x == 1)
-	for i in range(0, 5, 2):
-		x = i
-	assures(x == 4)
-
+	while x <= 5:
+		x += 1
+	assures(x == 5)

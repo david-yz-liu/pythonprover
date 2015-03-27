@@ -19,8 +19,6 @@ for the ast node it's called on. It returns nothing when reading 'True' or 'Fals
 and will not fill in function def paramenters codegen.to_source('f(x,y)') == f( , )
 
 //////////////////////////////////// TODO //////////////////////////////////////
-Create z3 representation of a function definition - to be used for Call Nodes
-    - Do one pass over function definitions to generate z3 declarations
 Handle recursive calls
     - 
 if statements
@@ -29,6 +27,8 @@ Find a way out of hard indexing into orelse nodes in an ast.if Node
 Change way if-expressions are handled - currently only accessable from with visit_Assign
 Call Nodes are sometimes wrapped in Expr Nodes. Find a way to call self.visit_Call
 from inside visit_Expr
+make one (global)visitor for making recursive calls - instead of creating a new
+visitor each time
 
 '''
 
@@ -46,8 +46,6 @@ from z3 import *
 
 import codegen
 from codegen import *
-
-# init("z3.dll")
 
 # The solver in which all z3 assertions go
 global_solver = z3.Solver()
@@ -147,13 +145,6 @@ class Z3Visitor(ast.NodeVisitor):
     """
 
     def visit_For(self, node):
-        # target, iter, body, orelse
-        print("For node:")
-        print("\ttarget.id", node.target.id)    
-        print("\titer", node.iter)
-        print("\tbody", node.body)
-        print("\torelse", node.orelse)
-        print()
 
         # Get optional arguments, 
         # TODO: Make this not horrible. 
@@ -161,27 +152,23 @@ class Z3Visitor(ast.NodeVisitor):
         # - codegen?
         # - lambda
         range_args_len = len(node.iter.args)
-
+        start = 0
+        step = 1
         if range_args_len == 1:
-            start = 0
             end = node.iter.args[0].n
-            step = 1
         elif range_args_len ==2:
             start = node.iter.args[0].n
             end = node.iter.args[1].n
-            step = 1
         else:
             start = node.iter.args[0].n
             end = node.iter.args[1].n
             step = node.iter.args[2].n
 
-        # declare itorator as z3 variable
+        # declare iterator as z3 variable
         iterator = node.target.id
         local_vars[iterator] = iterator
         exec("global "+iterator)
         exec(iterator+" = z3.Int('+iterator+')", globals())
-
-        loop_visitor = Z3Visitor()
 
         for j in range(start, end, step):
             # increment iterator
@@ -191,14 +178,34 @@ class Z3Visitor(ast.NodeVisitor):
             
             # Execute body
             for body_node in node.body:
-                loop_visitor.visit(body_node)
-
+                source_visitor.visit(body_node)
 
     def visit_While(self, node):
+        """
+        Works with While loops of the form:
+        while x <compare-op> <constant>:
+            <body>
+            x += 1
+        """
+        # While(test, body, orelse)
+        # test holds the condition, such as a Compare node
         pass
 
+        # if isinstance(node.test, ast.Compare):
+        #     iterator = node.test.left.id
+        #     constant = node.test.comparators[0].n
+
+        #     while iterator <= constant: # Cannot do this :(
+        #         for body_node in node.body:
+        #             source_visitor.visit(body_node)
+
+        #         # Need to track changes in iterator
+        #         # still dependent on user input 
+
+        #         # assume x is incremented
+        #         iterator += 1
+
     def visit_Call(self, node):
-        # class Call(
         print ("Call node: ")
         print ("\tfunc", node.func)
         print ("\targs", node.args)
@@ -206,6 +213,32 @@ class Z3Visitor(ast.NodeVisitor):
         print ("\tstarargs", node.starargs)
         print ("\tkwargs", node.kwargs)
         print ()
+        # print("Call node {0} \n \targs: {1}\n\t{2}, {3}, {4}".format(node.value.func.id, node.value.args, node.value.keywords, node.value.starargs, node.value.kwargs))
+        # class Call(func, args, keywords, starargs, kwargs)
+        # consider moving this case entirely to visit_call
+        if isinstance(node.func, ast.Name): # Could be Attribute node
+            if node.func.id == 'requires' or node.func.id == 'assures':
+                # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
+                for condition in node.args:
+                    body = codegen.to_source(condition)
+
+                    if node.func.id == 'assures':
+                        for key in local_vars:
+                            body = re.sub(key, local_vars[key], body)
+                    # Add assersion to the global solver
+                    eval("global_solver.add"+body)
+
+                    z3_calls.append(body[1:-1])
+                    return
+            else: # Some other function call
+                print ("call to:", node.func.id, "passing...")
+                # call/apply z3 representation of this function
+                # source_visitor.visit(node.value)
+        else: 
+            print("call function is of type:", node.func)
+            print ("passing...")
+
+
 
     def visit_If(self, node):
         """
@@ -226,15 +259,13 @@ class Z3Visitor(ast.NodeVisitor):
         # Take a snapshot of the variable set before entering the if-elif-else block
         before = copy.copy(local_vars) # snapshot
         
-        # Create a visitor to visit the if-block
-        if_visitor = Z3Visitor()
         # Visit body
         for elem in node.body:
-            if_visitor.visit(elem)
+            source_visitor.visit(elem)
 
         # Take a snapshot of the variable set after exiting the if-elif-else block
-        after = copy.copy(local_vars) # snapshot 
-        
+        after = copy.copy(local_vars)
+        # Create a new incrementes vars that represent their two possibile value
         calculate_conditional_vars(before, after)
 
         after_var_sets[condition] = after
@@ -250,9 +281,8 @@ class Z3Visitor(ast.NodeVisitor):
                 condition = re.sub(key, local_vars[key], condition)
 
             # Visit body
-            elif_visitor = Z3Visitor()
             for elem in cur_orelse[0].body:
-                elif_visitor.visit(elem)
+                source_visitor.visit(elem)
 
             after = copy.copy(local_vars)
 
@@ -267,9 +297,8 @@ class Z3Visitor(ast.NodeVisitor):
         # Deal with the else statement (possibly empty)
         before = copy.copy(local_vars)
 
-        else_visitor = Z3Visitor()
         for elem in cur_orelse:
-            else_visitor.visit(elem)
+            source_visitor.visit(elem)
 
         after = copy.copy(local_vars)
 
@@ -321,26 +350,10 @@ class Z3Visitor(ast.NodeVisitor):
         'requires(...)' and 'assures(...)' expressions. More soon!
         """
         if isinstance(node.value, ast.Call):
-            # print("Call node {0} \n \targs: {1}\n\t{2}, {3}, {4}".format(node.value.func.id, node.value.args, node.value.keywords, node.value.starargs, node.value.kwargs))
-            # class Call(func, args, keywords, starargs, kwargs)
-            # consider moving this case entirely to visit_call
-            if isinstance(node.value.func, ast.Name):
-                if node.value.func.id == 'requires' or node.value.func.id == 'assures':
-                    # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
-                    for condition in node.value.args:
-                        body = codegen.to_source(condition)
-
-                        if node.value.func.id == 'assures':
-                            for key in local_vars:
-                                body = re.sub(key, local_vars[key], body)
-                        # Add assersion to the global solver
-                        eval("global_solver.add"+body)
-
-                        z3_calls.append(body[1:-1])
-            else: # function call
-                # call/apply z3 representation of this function
-                temp_visitor = Z3Visitor()
-                temp_visitor.visit(node.value)
+            source_visitor.visit(node.value)
+        else:
+            print ("Expr Node - Passing")
+            
 
 
 
@@ -363,8 +376,7 @@ class Z3Visitor(ast.NodeVisitor):
                 targets.append(nameObj.id)  
 
         if isinstance(RHS, ast.IfExp):
-            ifExp_visitor = Z3Visitor() 
-            cond_if_else = (ifExp_visitor.visit(RHS))
+            cond_if_else = (source_visitor.visit(RHS))
 
             cond = cond_if_else[0]
             if_body = cond_if_else[1]
@@ -468,9 +480,8 @@ class Z3Visitor(ast.NodeVisitor):
         local_vars = copy.copy(global_vars)
 
         # Visit function body and build z3 representation
-        func_visitor = Z3Visitor()
         for elem in node.body:
-            func_visitor.visit(elem)
+            source_visitor.visit(elem)
 
         after = local_vars
 
@@ -494,9 +505,9 @@ class Z3Visitor(ast.NodeVisitor):
         # Reset variables
         # local_vars = copy.copy(global_vars)
         # TODO: this way restarts the variables from x1, y1 etc
-        # we will get conflicting assertions about them if we have more than one funciton def
+        # we will get conflicting assertions about them if we have more than one function def
         # need to keep iterating where we left off, but divorce any relation to
-        # iterated vars used in prior funcitons
+        # iterated vars used in prior functions
 
     def visit_Return(self, node):
         pass
