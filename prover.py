@@ -14,10 +14,11 @@ read through the body to see how variables are modified.
     - upon reading the parameters of a FunctionDef Node
 
 ////////////////////////////////// WARNINGS ////////////////////////////////////
-codegen.to_source doesn't not always acurately return the correct sourec
+codegen.to_source doesn't not always acurately return the correct source
 for the ast node it's called on. It returns nothing when reading 'True' or 'False'
 and will not fill in function def paramenters codegen.to_source('f(x,y)') == f( , )
-
+'''
+'''
 //////////////////////////////////// TODO //////////////////////////////////////
 Handle recursive calls
     - 
@@ -31,6 +32,10 @@ from inside visit_Expr
 make one (global)visitor for making recursive calls - instead of creating a new
 visitor each time
 
+check validity: ForAll(Implies(And(precondition, z3 calls..), post-condition))
+print satisfiability for each function (give details)
+regex parse special comments
+
 '''
 
 import ast
@@ -39,6 +44,7 @@ import astpp
 import sys
 import re
 import copy
+import getopt
 from pprint import pprint
 from operator import itemgetter
 
@@ -48,8 +54,7 @@ from z3 import *
 import codegen
 from codegen import *
 
-DEBUG = False
-AST_PRINTOUT = True
+
 # The solver in which all z3 assertions go
 global_solver = z3.Solver()
 # Dictionary that keeps track of the current version of a variable
@@ -61,6 +66,68 @@ local_vars = {}
 # debug/keep track of what's in the solver
 z3_calls = []
 z3_vars = []
+
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv
+
+    Z3_INFO = False
+    AST_INFO = False
+
+    # Parse command line options
+    try:
+        opts, args = getopt.getopt(argv[1:], "d z a" , ["doc", "z3info", "astinfo"])
+    except getopt.error as msg:
+        print (msg)
+        print ("Usage: prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file")
+        return 2
+
+    # Process options
+    for o, a in opts:
+        if o in ("-d", "--doc"):
+            print (__doc__)
+            sys.exit(0)
+        if o in ("-z", "--z3info"):
+            Z3_INFO = True
+        if o in ("-a", "--astinfo"):
+            AST_INFO = True
+
+    arg_index = len(argv) - 1
+
+    with open (argv[arg_index], "r") as myfile:
+            data = myfile.read()
+
+    # Create Abstract Syntax Tree
+    tree = ast.parse(data)
+
+    # visit AST and create z3 definitions of each function in the source
+    function_visitor = Z3FunctionVisitor()
+    function_visitor.visit(tree)
+
+    # Visit AST and aggregate Z3 function calls
+    source_visitor.visit(tree)
+
+    result = global_solver.check() 
+    print ("RESULT:", result, "\n")
+
+    if Z3_INFO:
+
+        print ("\n------- Z3 print-out -------") 
+
+        print ("global_vars\n", global_vars)
+        print ("local_vars\n", local_vars)
+
+        print ("z3_vars\n", z3_vars)
+
+        print ("\nz3 calls ({0})".format(len(z3_calls)))
+        for call in z3_calls:
+            print (call)
+
+    if AST_INFO:
+        print ("------- Abstract Syntax Tree -------")
+        print (astpp.dump(tree))
+
+    return 0
 
 def get_return(node):
     """
@@ -109,8 +176,10 @@ def calculate_conditional_vars(before, after):
             z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
 
 def check_sat(node):
-    if global_solver.check_sat() == unsat:
+    if global_solver.check() == unsat:
         print ('Error: Satisfiability failure. Line {0}'.format(node.name))
+    else: 
+        print ('satisfiable Line {0}'.format(node.name))
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -149,7 +218,7 @@ class Z3Visitor(ast.NodeVisitor):
         # TODO: Make this not horrible. 
         # - pass range() source's range() args directly somehow
         # - codegen?
-        # - lambda
+        # - lambda?
         range_args_len = len(node.iter.args)
         start = 0
         step = 1
@@ -181,7 +250,7 @@ class Z3Visitor(ast.NodeVisitor):
 
     def visit_While(self, node):
         """
-        Works with While loops of the form:
+        While loops of the form:
         while x <compare-op> <constant>:
             <body>
             x += 1
@@ -221,18 +290,14 @@ class Z3Visitor(ast.NodeVisitor):
                     z3_calls.append(body[1:-1])
                     return
             else: # Some other function call
-                if DEBUG:
+                if Z3_INFO:
                     print ("call to:", n_id, "passing...")
                     # call/apply z3 representation of this function
                     # source_visitor.visit(node.value)
         else: 
-            if DEBUG:
+            if Z3_INFO:
                 print ("call function is of type:", node.func)
                 print ("passing...")
-
-        check_sat(node)
-
-
 
     def visit_If(self, node):
         """
@@ -346,11 +411,7 @@ class Z3Visitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Call):
             source_visitor.visit(node.value)
         else:
-            if DEBUG:
-                print ("Expr Node - Passing")
-            
-
-
+            if Z3_INFO: print ("Expr Node - Passing")
 
     def visit_Assign(self, node):
         """
@@ -400,7 +461,7 @@ class Z3Visitor(ast.NodeVisitor):
             return
 
         elif isinstance(RHS, ast.UnaryOp):
-            if DEBUG: print("Error: Assignment from unary expressions not yet supported")
+            if Z3_INFO: print("Error: Assignment from unary expressions not yet supported")
             return
         # Otherwise RHS is a Name, Num or Binop
 
@@ -453,7 +514,7 @@ class Z3Visitor(ast.NodeVisitor):
         elif isinstance(node.op, ast.Mod):
             operator = '%'
         else:
-            if DEBUG: print("Augmented Assignment of type", node.op.op, "not yet implemented")
+            if Z3_INFO: print("Augmented Assignment of type", node.op.op, "not yet implemented")
             return
 
         # Build the new variable's relationship with its predecessor
@@ -478,6 +539,10 @@ class Z3Visitor(ast.NodeVisitor):
         for elem in node.body:
             source_visitor.visit(elem)
 
+        # print("Z3_INFO", Z3_INFO)
+        # if Z3_INFO: 
+        #     check_sat(node)
+
         after = local_vars
 
         # get return variable
@@ -495,53 +560,15 @@ class Z3Visitor(ast.NodeVisitor):
 
             arg_list_str = ", ".join(arg_list)
 
-            # print("global_solver.add(ForAll(["+arg_list_str+"], "+node.name+"("+arg_list_str+") == "+return_val+"))")
 
-        # Reset variables
-        # local_vars = copy.copy(global_vars)
-        # TODO: this way restarts the variables from x1, y1 etc
-        # we will get conflicting assertions about them if we have more than one function def
-        # need to keep iterating where we left off, but divorce any relation to
-        # iterated vars used in prior functions
 
     def visit_Return(self, node):
         pass
 
 source_visitor = Z3Visitor()
 
-def main():
-    with open (sys.argv[1], "r") as myfile:
-            data = myfile.read()
-
-
-    tree = ast.parse(data)
-
-    # visit AST and create z3 definitions of each function in the source
-    function_visitor = Z3FunctionVisitor()
-    function_visitor.visit(tree)
-
-    # Visit AST and aggregate Z3 function calls
-    source_visitor.visit(tree)
-
-    result = global_solver.check() 
-    print ("RESULT:", result, "\n")
-
-    if DEBUG:
-
-        print ("\n------- Debug print-out -------") 
-
-        print ("global_vars\n", global_vars)
-        print ("local_vars\n", local_vars)
-
-        print ("z3_vars\n", z3_vars)
-
-        print ("\ncalls", len(z3_calls))
-        for call in z3_calls:
-            print (call)
-
-    if AST_PRINTOUT:
-        print ("------- Abstract Syntax Tree -------")
-        print (astpp.dump(tree))
+Z3_INFO = False
+AST_INFO = False
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
