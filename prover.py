@@ -23,6 +23,7 @@ Handle recursive calls
     - 
 if statements
     - Optimize: Use z3.If() function to represent if-else-block instead of z3.Or() 
+for statements - support unknown number of iterations
 Find a way out of hard indexing into orelse nodes in an ast.if Node
 Change way if-expressions are handled - currently only accessable from with visit_Assign
 Call Nodes are sometimes wrapped in Expr Nodes. Find a way to call self.visit_Call
@@ -47,6 +48,8 @@ from z3 import *
 import codegen
 from codegen import *
 
+DEBUG = False
+AST_PRINTOUT = True
 # The solver in which all z3 assertions go
 global_solver = z3.Solver()
 # Dictionary that keeps track of the current version of a variable
@@ -58,13 +61,6 @@ local_vars = {}
 # debug/keep track of what's in the solver
 z3_calls = []
 z3_vars = []
-
-def pretty_print_dic(dictionary):
-    """
-    Print a dictionary out in a readable format
-    """
-    for k, v in sorted(dictionary.items(), key=itemgetter(1)):
-        print (k, ":", v)
 
 def get_return(node):
     """
@@ -112,6 +108,9 @@ def calculate_conditional_vars(before, after):
             # Track new vars and assertions for debugging purposes
             z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
 
+def check_sat(node):
+    if global_solver.check_sat() == unsat:
+        print ('Error: Satisfiability failure. Line {0}'.format(node.name))
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -175,7 +174,7 @@ class Z3Visitor(ast.NodeVisitor):
             incremented = increment_z3_var(iterator)
             exec("global_solver.add("+incremented+" == "+str(j)+")") 
             z3_calls.append(incremented+" == "+str(j))
-            
+
             # Execute body
             for body_node in node.body:
                 source_visitor.visit(body_node)
@@ -206,23 +205,14 @@ class Z3Visitor(ast.NodeVisitor):
         #         iterator += 1
 
     def visit_Call(self, node):
-        print ("Call node: ")
-        print ("\tfunc", node.func)
-        print ("\targs", node.args)
-        print ("\tkeywords", node.keywords)
-        print ("\tstarargs", node.starargs)
-        print ("\tkwargs", node.kwargs)
-        print ()
-        # print("Call node {0} \n \targs: {1}\n\t{2}, {3}, {4}".format(node.value.func.id, node.value.args, node.value.keywords, node.value.starargs, node.value.kwargs))
-        # class Call(func, args, keywords, starargs, kwargs)
-        # consider moving this case entirely to visit_call
         if isinstance(node.func, ast.Name): # Could be Attribute node
-            if node.func.id == 'requires' or node.func.id == 'assures':
+            n_id = node.func.id
+            if n_id == 'requires' or n_id == 'assures' or n_id == 'assert':
                 # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
                 for condition in node.args:
                     body = codegen.to_source(condition)
 
-                    if node.func.id == 'assures':
+                    if n_id == 'assures' or n_id == 'assert':
                         for key in local_vars:
                             body = re.sub(key, local_vars[key], body)
                     # Add assersion to the global solver
@@ -231,12 +221,16 @@ class Z3Visitor(ast.NodeVisitor):
                     z3_calls.append(body[1:-1])
                     return
             else: # Some other function call
-                print ("call to:", node.func.id, "passing...")
-                # call/apply z3 representation of this function
-                # source_visitor.visit(node.value)
+                if DEBUG:
+                    print ("call to:", n_id, "passing...")
+                    # call/apply z3 representation of this function
+                    # source_visitor.visit(node.value)
         else: 
-            print("call function is of type:", node.func)
-            print ("passing...")
+            if DEBUG:
+                print ("call function is of type:", node.func)
+                print ("passing...")
+
+        check_sat(node)
 
 
 
@@ -352,7 +346,8 @@ class Z3Visitor(ast.NodeVisitor):
         if isinstance(node.value, ast.Call):
             source_visitor.visit(node.value)
         else:
-            print ("Expr Node - Passing")
+            if DEBUG:
+                print ("Expr Node - Passing")
             
 
 
@@ -405,7 +400,7 @@ class Z3Visitor(ast.NodeVisitor):
             return
 
         elif isinstance(RHS, ast.UnaryOp):
-            print("Error: Assignment from unary expressions not yet supported")
+            if DEBUG: print("Error: Assignment from unary expressions not yet supported")
             return
         # Otherwise RHS is a Name, Num or Binop
 
@@ -458,7 +453,7 @@ class Z3Visitor(ast.NodeVisitor):
         elif isinstance(node.op, ast.Mod):
             operator = '%'
         else:
-            print("Augmented Assignment of type", node.op.op, "not yet implemented")
+            if DEBUG: print("Augmented Assignment of type", node.op.op, "not yet implemented")
             return
 
         # Build the new variable's relationship with its predecessor
@@ -512,34 +507,41 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_Return(self, node):
         pass
 
-
-with open (sys.argv[1], "r") as myfile:
-        data = myfile.read()
-
-
-tree = ast.parse(data)
-print ("------- Abstract Syntax Tree -------")
-print (astpp.dump(tree))
-
-# visit AST and create z3 definitions of each function in the source
-function_visitor = Z3FunctionVisitor()
-function_visitor.visit(tree)
-
-# Visit AST and aggregate Z3 function calls
 source_visitor = Z3Visitor()
-source_visitor.visit(tree)
 
-print ("\n------- Debug print-out -------") 
-result = global_solver.check() 
-print ("RESULT:", result, "\n")
+def main():
+    with open (sys.argv[1], "r") as myfile:
+            data = myfile.read()
 
-print ("global_vars\n", global_vars)
-print ("local_vars\n", local_vars)
 
-# print ("\nvars", len(z3_vars))
-# for var in sorted(z3_vars):
-#     print(var)
+    tree = ast.parse(data)
 
-print ("\ncalls", len(z3_calls))
-for call in z3_calls:
-    print (call)
+    # visit AST and create z3 definitions of each function in the source
+    function_visitor = Z3FunctionVisitor()
+    function_visitor.visit(tree)
+
+    # Visit AST and aggregate Z3 function calls
+    source_visitor.visit(tree)
+
+    result = global_solver.check() 
+    print ("RESULT:", result, "\n")
+
+    if DEBUG:
+
+        print ("\n------- Debug print-out -------") 
+
+        print ("global_vars\n", global_vars)
+        print ("local_vars\n", local_vars)
+
+        print ("z3_vars\n", z3_vars)
+
+        print ("\ncalls", len(z3_calls))
+        for call in z3_calls:
+            print (call)
+
+    if AST_PRINTOUT:
+        print ("------- Abstract Syntax Tree -------")
+        print (astpp.dump(tree))
+
+if __name__ == "__main__":
+    main()
