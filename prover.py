@@ -118,9 +118,9 @@ def calculate_conditional_vars(before, after):
 
 def check_sat(node):
     if global_solver.check() == unsat:
-        print ('{0} Error: Satisfiability failure. line {0}'.format(node.name, node.lineno))
+        print ('{0}: line {1}\n\tUnsatisfiable.'.format(node.name, node.lineno))
     else: 
-        print ('{0}: Satisfiable. line {1}'.format(node.name, node.lineno))
+        print ('{0}: line {1}\n\tSatisfiable.'.format(node.name, node.lineno))
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -475,14 +475,13 @@ class Z3Visitor(ast.NodeVisitor):
         Declare parameters as z3 variables. Create new Z3Visitor to visit each 
         element in the functionDef body. 
         """
+        global_solver.push() # enter local scope
         global local_vars
         local_vars = copy.copy(global_vars)
 
         # Visit function body and build z3 representation
         for elem in node.body:
             self.visit(elem)
-
-        if self.Z3_INFO: check_sat(node)
 
         after = local_vars
 
@@ -500,6 +499,11 @@ class Z3Visitor(ast.NodeVisitor):
                 arg_list.append(elem.arg)
 
             arg_list_str = ", ".join(arg_list)
+
+
+        check_sat(node)
+        
+        global_solver.pop() # return to global scope
 
     def visit_Return(self, node):
         pass

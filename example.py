@@ -5,6 +5,7 @@ def odd_or_negative(x, y):
 	Case 2: x is negative or zero. Return 1
 	Otherwise: Return x
 	"""
+	#@ requires (x ==1, x==3)
 	if x%2 == 1:
 		y = 0
 	elif x <= 0:
