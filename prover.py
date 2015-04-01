@@ -67,67 +67,8 @@ local_vars = {}
 z3_calls = []
 z3_vars = []
 
-def main(argv=None):
-    if argv is None:
-        argv = sys.argv
 
-    Z3_INFO = False
-    AST_INFO = False
-
-    # Parse command line options
-    try:
-        opts, args = getopt.getopt(argv[1:], "d z a" , ["doc", "z3info", "astinfo"])
-    except getopt.error as msg:
-        print (msg)
-        print ("Usage: prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file")
-        return 2
-
-    # Process options
-    for o, a in opts:
-        if o in ("-d", "--doc"):
-            print (__doc__)
-            sys.exit(0)
-        if o in ("-z", "--z3info"):
-            Z3_INFO = True
-        if o in ("-a", "--astinfo"):
-            AST_INFO = True
-
-    arg_index = len(argv) - 1
-
-    with open (argv[arg_index], "r") as myfile:
-            data = myfile.read()
-
-    # Create Abstract Syntax Tree
-    tree = ast.parse(data)
-
-    # visit AST and create z3 definitions of each function in the source
-    function_visitor = Z3FunctionVisitor()
-    function_visitor.visit(tree)
-
-    # Visit AST and aggregate Z3 function calls
-    source_visitor.visit(tree)
-
-    result = global_solver.check() 
-    print ("RESULT:", result, "\n")
-
-    if Z3_INFO:
-
-        print ("\n------- Z3 print-out -------") 
-
-        print ("global_vars\n", global_vars)
-        print ("local_vars\n", local_vars)
-
-        print ("z3_vars\n", z3_vars)
-
-        print ("\nz3 calls ({0})".format(len(z3_calls)))
-        for call in z3_calls:
-            print (call)
-
-    if AST_INFO:
-        print ("------- Abstract Syntax Tree -------")
-        print (astpp.dump(tree))
-
-    return 0
+AST_INFO = False
 
 def get_return(node):
     """
@@ -177,9 +118,9 @@ def calculate_conditional_vars(before, after):
 
 def check_sat(node):
     if global_solver.check() == unsat:
-        print ('Error: Satisfiability failure. Line {0}'.format(node.name))
+        print ('{0} Error: Satisfiability failure. line {0}'.format(node.name, node.lineno))
     else: 
-        print ('satisfiable Line {0}'.format(node.name))
+        print ('{0}: Satisfiable. line {1}'.format(node.name, node.lineno))
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -211,6 +152,8 @@ class Z3Visitor(ast.NodeVisitor):
     The main thing! Reads over an AST and determines if the program the AST 
     represents is satisfiable.
     """
+    def __init__(self, Z3_INFO=False):
+        self.Z3_INFO = Z3_INFO
 
     def visit_For(self, node):
 
@@ -246,7 +189,7 @@ class Z3Visitor(ast.NodeVisitor):
 
             # Execute body
             for body_node in node.body:
-                source_visitor.visit(body_node)
+                self.visit(body_node)
 
     def visit_While(self, node):
         """
@@ -265,7 +208,7 @@ class Z3Visitor(ast.NodeVisitor):
 
         #     while iterator <= constant: # Cannot do this :(
         #         for body_node in node.body:
-        #             source_visitor.visit(body_node)
+        #             self.visit(body_node)
 
         #         # Need to track changes in iterator
         #         # still dependent on user input 
@@ -290,12 +233,12 @@ class Z3Visitor(ast.NodeVisitor):
                     z3_calls.append(body[1:-1])
                     return
             else: # Some other function call
-                if Z3_INFO:
+                if self.Z3_INFO:
                     print ("call to:", n_id, "passing...")
                     # call/apply z3 representation of this function
-                    # source_visitor.visit(node.value)
+                    # self.visit(node.value)
         else: 
-            if Z3_INFO:
+            if self.Z3_INFO:
                 print ("call function is of type:", node.func)
                 print ("passing...")
 
@@ -320,7 +263,7 @@ class Z3Visitor(ast.NodeVisitor):
         
         # Visit body
         for elem in node.body:
-            source_visitor.visit(elem)
+            self.visit(elem)
 
         # Take a snapshot of the variable set after exiting the if-elif-else block
         after = copy.copy(local_vars)
@@ -341,7 +284,7 @@ class Z3Visitor(ast.NodeVisitor):
 
             # Visit body
             for elem in cur_orelse[0].body:
-                source_visitor.visit(elem)
+                self.visit(elem)
 
             after = copy.copy(local_vars)
 
@@ -357,7 +300,7 @@ class Z3Visitor(ast.NodeVisitor):
         before = copy.copy(local_vars)
 
         for elem in cur_orelse:
-            source_visitor.visit(elem)
+            self.visit(elem)
 
         after = copy.copy(local_vars)
 
@@ -409,9 +352,9 @@ class Z3Visitor(ast.NodeVisitor):
         'requires(...)' and 'assures(...)' expressions. More soon!
         """
         if isinstance(node.value, ast.Call):
-            source_visitor.visit(node.value)
+            self.visit(node.value)
         else:
-            if Z3_INFO: print ("Expr Node - Passing")
+            if self.Z3_INFO: print ("Expr Node - Passing")
 
     def visit_Assign(self, node):
         """
@@ -432,7 +375,7 @@ class Z3Visitor(ast.NodeVisitor):
                 targets.append(nameObj.id)  
 
         if isinstance(RHS, ast.IfExp):
-            cond_if_else = (source_visitor.visit(RHS))
+            cond_if_else = (self.visit(RHS))
 
             cond = cond_if_else[0]
             if_body = cond_if_else[1]
@@ -461,7 +404,7 @@ class Z3Visitor(ast.NodeVisitor):
             return
 
         elif isinstance(RHS, ast.UnaryOp):
-            if Z3_INFO: print("Error: Assignment from unary expressions not yet supported")
+            if self.Z3_INFO: print("Error: Assignment from unary expressions not yet supported")
             return
         # Otherwise RHS is a Name, Num or Binop
 
@@ -514,7 +457,7 @@ class Z3Visitor(ast.NodeVisitor):
         elif isinstance(node.op, ast.Mod):
             operator = '%'
         else:
-            if Z3_INFO: print("Augmented Assignment of type", node.op.op, "not yet implemented")
+            if self.Z3_INFO: print("Augmented Assignment of type", node.op.op, "not yet implemented")
             return
 
         # Build the new variable's relationship with its predecessor
@@ -537,11 +480,9 @@ class Z3Visitor(ast.NodeVisitor):
 
         # Visit function body and build z3 representation
         for elem in node.body:
-            source_visitor.visit(elem)
+            self.visit(elem)
 
-        # print("Z3_INFO", Z3_INFO)
-        # if Z3_INFO: 
-        #     check_sat(node)
+        if self.Z3_INFO: check_sat(node)
 
         after = local_vars
 
@@ -560,15 +501,74 @@ class Z3Visitor(ast.NodeVisitor):
 
             arg_list_str = ", ".join(arg_list)
 
-
-
     def visit_Return(self, node):
         pass
 
-source_visitor = Z3Visitor()
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv
 
-Z3_INFO = False
-AST_INFO = False
+    Z3_INFO = False
+    AST_INFO = False
+
+    # Parse command line options
+    try:
+        opts, args = getopt.getopt(argv[1:], "d z a" , ["doc", "z3info", "astinfo"])
+    except getopt.error as msg:
+        print (msg)
+        print ("Usage: prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file")
+        return 2
+
+    # Process options
+    for o, a in opts:
+        if o in ("-d", "--doc"):
+            print (__doc__)
+            sys.exit(0)
+        if o in ("-z", "--z3info"):
+            Z3_INFO = True
+        if o in ("-a", "--astinfo"):
+            AST_INFO = True
+
+    arg_index = len(argv) - 1
+
+    with open (argv[arg_index], "r") as myfile:
+            data = myfile.read()
+
+
+    data = re.sub(r'#@\s*requires\s*(.*)\n', r'requires \1\n', data, 0, re.M)
+    data = re.sub(r'#@\s*assures\s*(.*)\n', r'assures \1\n', data, 0, re.M)
+    # Create Abstract Syntax Tree
+    tree = ast.parse(data)
+
+    # visit AST and create z3 definitions of each function in the source
+    function_visitor = Z3FunctionVisitor()
+    function_visitor.visit(tree)
+
+    # Visit AST and aggregate Z3 function calls
+    source_visitor = Z3Visitor(Z3_INFO)
+    source_visitor.visit(tree)
+
+    result = global_solver.check() 
+    print ("RESULT:", result, "\n")
+
+    if Z3_INFO:
+
+        print ("\n------- Z3 print-out -------") 
+
+        print ("global_vars\n", global_vars)
+        print ("local_vars\n", local_vars)
+
+        print ("z3_vars\n", z3_vars)
+
+        print ("\nz3 calls ({0})".format(len(z3_calls)))
+        for call in z3_calls:
+            print (call)
+
+    if AST_INFO:
+        print ("------- Abstract Syntax Tree -------")
+        print (astpp.dump(tree))
+
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -12,7 +12,7 @@ def odd_or_negative(x, y):
 	else:
 		y = x
 	return y
-	assures (y > 0)
+	#@ assures (y > 0)
 
 def sum_odd_under_ten():
 	x = 0
