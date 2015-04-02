@@ -39,6 +39,19 @@ Range based loops: `for i in range (1, 9, 2)` and if-expressions: `x = 1 if y%2 
 This program is a work in progress. I'm currently working on supporting function calls, while-loops, and for-loops that iterate over objects. Eventually I hope to extend support beyond just arithmetics, including string, list and dictionary operations
 ***
 
+## Satisfiability and Validity
+
+This program checks for both satisfiability and validity. Depending on your purposes, testing satisfiability may be enough information to debug your code. But sometimes we want the behaviour of a function precisely defined. To achieve validity the post condition must match all possible values of any variable referenced in it. For example:
+
+    def increment(x):
+    	#@ requires(x > 0, x < 3)
+    	#@ assures(y == 3) 
+    	x += 1
+    	y = x
+    	return y
+    	
+This function take 1 or 2 as an argument and returns 2 or 3, respectively. However, since the post condition is does not capture all possible output, this function is invalid. To achieve validity we must be very specific with our post-conditions
+
 ## How Does it Work?
 
 This program makes use of the [Python Abstract Syntax Tree](https://docs.python.org/3.4/library/ast.html) (AST) and uses [Z3](http://z3.codeplex.com/) - a Theorem Prover to create a logical formulation of the source code. The source is first compiled into an AST, then a modified AST Visitor traverses the first level of the tree, declaring function prototypes/stubs for each function. Another Visitor then traverses the tree, this time in its entirety, tracking source variables and adding logical assertions about said variables to a Z3 Solver object which is, finally, checked for satisfiability. 
