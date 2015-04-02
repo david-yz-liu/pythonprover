@@ -17,25 +17,8 @@ read through the body to see how variables are modified.
 codegen.to_source doesn't not always acurately return the correct source
 for the ast node it's called on. It returns nothing when reading 'True' or 'False'
 and will not fill in function def paramenters codegen.to_source('f(x,y)') == f( , )
-'''
-'''
-//////////////////////////////////// TODO //////////////////////////////////////
-Handle recursive calls
-    - 
-if statements
-    - Optimize: Use z3.If() function to represent if-else-block instead of z3.Or() 
-for statements - support unknown number of iterations
-Find a way out of hard indexing into orelse nodes in an ast.if Node
-Change way if-expressions are handled - currently only accessable from with visit_Assign
-Call Nodes are sometimes wrapped in Expr Nodes. Find a way to call self.visit_Call
-from inside visit_Expr
-make one (global)visitor for making recursive calls - instead of creating a new
-visitor each time
-
-check validity: ForAll(Implies(And(precondition, z3 calls..), post-condition))
-print satisfiability for each function (give details)
-regex parse special comments
-
+or find multiple conditions in assertions: codegen.to_source('requires(x < 0, x < 3)')
+== requires(x < 0)
 '''
 
 import ast
@@ -47,6 +30,9 @@ import copy
 import getopt
 from pprint import pprint
 from operator import itemgetter
+# import parser
+import sourcegen
+from sourcegen import *
 
 import z3
 from z3 import *
@@ -64,9 +50,7 @@ local_vars = {}
 
 # Since print(<z3.Solver()>) doesn't work, use these lists to
 # debug/keep track of what's in the solver
-z3_calls = []
 z3_vars = []
-
 
 AST_INFO = False
 
@@ -113,14 +97,34 @@ def calculate_conditional_vars(before, after):
             # Give it the two possible values
             exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
 
-            # Track new vars and assertions for debugging purposes
-            z3_calls.append("Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+")")
-
 def check_sat(node):
-    if global_solver.check() == unsat:
-        print ('{0}: line {1}\n\tUnsatisfiable.'.format(node.name, node.lineno))
+    print ("Function report:")
+    if global_solver.check() == sat:
+        print ('\tname: {0}\n\tline {1}\n\t**Satisfiable**.'.format(node.name, node.lineno))
     else: 
-        print ('{0}: line {1}\n\tSatisfiable.'.format(node.name, node.lineno))
+        print ('\tname: {0}\n\tline {1}\n\t**Unsatisfiable**. No instantiation of variables\
+can satisfy all assertions'.format(node.name, node.lineno))
+
+    global post_conditions
+    if post_conditions: 
+        # substitute current incremented vars for each var in post-condition
+        for key in local_vars:
+            for i in range(len(post_conditions)):
+                post_conditions[i] = re.sub(key, local_vars[key], post_conditions[i])
+
+        var_list = ", ".join(z3_vars)
+        assertions = str(global_solver.assertions())
+        conditions = ", ".join(post_conditions)
+
+        post_cond_str = "ForAll(["+var_list+"], Implies(z3.And("+assertions+"), z3.And("+conditions+")))"
+
+        exec("global_solver.add("+post_cond_str+")")
+
+        if global_solver.check() == sat:
+            print ('\t**Valid**.\n')
+        else: 
+            print ('\t**Invalid**. Post-condition(s) falsifiable. \
+Fails on this assertion: \n\t"{0}"\n'.format(post_cond_str))
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -184,54 +188,34 @@ class Z3Visitor(ast.NodeVisitor):
         for j in range(start, end, step):
             # increment iterator
             incremented = increment_z3_var(iterator)
-            exec("global_solver.add("+incremented+" == "+str(j)+")") 
-            z3_calls.append(incremented+" == "+str(j))
+            exec("global_solver.add("+incremented+" == "+str(j)+")")
 
             # Execute body
             for body_node in node.body:
                 self.visit(body_node)
 
-    def visit_While(self, node):
-        """
-        While loops of the form:
-        while x <compare-op> <constant>:
-            <body>
-            x += 1
-        """
-        # While(test, body, orelse)
-        # test holds the condition, such as a Compare node
-        pass
-
-        # if isinstance(node.test, ast.Compare):
-        #     iterator = node.test.left.id
-        #     constant = node.test.comparators[0].n
-
-        #     while iterator <= constant: # Cannot do this :(
-        #         for body_node in node.body:
-        #             self.visit(body_node)
-
-        #         # Need to track changes in iterator
-        #         # still dependent on user input 
-
-        #         # assume x is incremented
-        #         iterator += 1
-
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name): # Could be Attribute node
             n_id = node.func.id
-            if n_id == 'requires' or n_id == 'assures' or n_id == 'assert':
+            if n_id == 'requires' or n_id == 'assures':
                 # Uncompile 'bodyx' in 'requires/assures(body1, body2, ...) for all x
-                for condition in node.args:
-                    body = codegen.to_source(condition)
+                # Since codegen fails to convert all bodyx's, we must do this:
+                args = codegen.to_source(node)
+                args = re.sub(n_id, '', args) # Remove function call
+                args = args.strip(' ()') # Remove surrounding spaces and parenthesis
+                args = args.split(",") # Convert to list
 
-                    if n_id == 'assures' or n_id == 'assert':
-                        for key in local_vars:
-                            body = re.sub(key, local_vars[key], body)
-                    # Add assersion to the global solver
-                    eval("global_solver.add"+body)
+                for body in args:
+                    body = body.strip(' ()')
+                    if n_id == 'assures':
+                        global post_conditions
+                        post_conditions.append(body) # To be executed at end of parent visit_FunctionDef
 
-                    z3_calls.append(body[1:-1])
-                    return
+                    else:
+                        # Add assersion to the global solver
+                        eval("global_solver.add("+body+")")
+                return
+
             else: # Some other function call
                 if self.Z3_INFO:
                     print ("call to:", n_id, "passing...")
@@ -319,7 +303,6 @@ class Z3Visitor(ast.NodeVisitor):
 
             # Assert that if the condition is true, the variables are equal
             exec("global_solver.add(z3.Implies("+condition+", z3.And("+var_equivalencies_str+")))")
-            z3_calls.append("z3.Implies("+condition+", z3.And("+var_equivalencies_str+"))")
 
     def visit_IfExp(self, node):
         """ 
@@ -349,7 +332,7 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_Expr(self, node):
         """ 
         Visit an expression, currently this function only looks at
-        'requires(...)' and 'assures(...)' expressions. More soon!
+        'requires(...)' and 'assures(...)' expressions.
         """
         if isinstance(node.value, ast.Call):
             self.visit(node.value)
@@ -391,7 +374,6 @@ class Z3Visitor(ast.NodeVisitor):
                     exec("global_solver.add(z3.Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                     z3_vars.append(target)
-                    z3_calls.append("Or("+target+" == "+if_body+","+target+" == "+else_body+"))")
 
                 else: # Existing variable
 
@@ -400,7 +382,6 @@ class Z3Visitor(ast.NodeVisitor):
                     exec("global_solver.add(z3.Or("+incremented+" == "+if_body+", "+incremented+" == "+else_body+"))")
 
                     z3_vars.append(incremented)
-                    z3_calls.append("Or("+incremented+" == "+if_body+", "+incremented+" == "+else_body+"))")
             return
 
         elif isinstance(RHS, ast.UnaryOp):
@@ -424,14 +405,11 @@ class Z3Visitor(ast.NodeVisitor):
                 exec("global_solver.add("+target+" == "+body+")")
 
                 z3_vars.append(target)
-                z3_calls.append(target+" == "+body)
 
             else: # Existing variable
                 incremented = increment_z3_var(target)
                 # Declare the new variable's relationship with its predecessor
                 exec("global_solver.add("+incremented+" == "+body+")")
-
-                z3_calls.append(incremented+" == "+body)
 
     def visit_AugAssign(self, node):
         """
@@ -468,14 +446,15 @@ class Z3Visitor(ast.NodeVisitor):
         # Declare the new variable's relationship with its predecessor
         exec("global_solver.add("+incremented+" == "+body+")")
 
-        z3_calls.append(incremented+" == "+body)
-
     def visit_FunctionDef(self, node):
         """
         Declare parameters as z3 variables. Create new Z3Visitor to visit each 
         element in the functionDef body. 
         """
+        # Initialize new function
         global_solver.push() # enter local scope
+        global post_conditions
+        post_conditions = []
         global local_vars
         local_vars = copy.copy(global_vars)
 
@@ -500,15 +479,30 @@ class Z3Visitor(ast.NodeVisitor):
 
             arg_list_str = ", ".join(arg_list)
 
-
         check_sat(node)
-        
+
+        if self.Z3_INFO:
+
+            print ("\t------- Z3 print-out -------") 
+
+            print ("\tglobal_vars\n\t{0}".format(global_vars))
+            print ("\tlocal_vars\n\t{0}".format(local_vars))
+
+            print ("\tz3_vars\n\t{0}".format(z3_vars))
+
+            print ("\tz3 assertions ({0})\n\t{1}".format(len(global_solver.assertions()), global_solver))
+
         global_solver.pop() # return to global scope
 
     def visit_Return(self, node):
         pass
 
+
+
 def main(argv=None):
+    """
+    Parse source file, find satisfiability, validity.
+    """
     if argv is None:
         argv = sys.argv
 
@@ -538,9 +532,10 @@ def main(argv=None):
     with open (argv[arg_index], "r") as myfile:
             data = myfile.read()
 
+    # Convert special syntax into assertions calls
+    data = re.sub('#@\s*requires\s*(.*)\n', r'requires \1\n', data, 0, re.M)
+    data = re.sub('#@\s*assures\s*(.*)\n', r'assures \1\n', data, 0, re.M)
 
-    data = re.sub(r'#@\s*requires\s*(.*)\n', r'requires \1\n', data, 0, re.M)
-    data = re.sub(r'#@\s*assures\s*(.*)\n', r'assures \1\n', data, 0, re.M)
     # Create Abstract Syntax Tree
     tree = ast.parse(data)
 
@@ -552,27 +547,32 @@ def main(argv=None):
     source_visitor = Z3Visitor(Z3_INFO)
     source_visitor.visit(tree)
 
-    result = global_solver.check() 
-    print ("RESULT:", result, "\n")
-
-    if Z3_INFO:
-
-        print ("\n------- Z3 print-out -------") 
-
-        print ("global_vars\n", global_vars)
-        print ("local_vars\n", local_vars)
-
-        print ("z3_vars\n", z3_vars)
-
-        print ("\nz3 calls ({0})".format(len(z3_calls)))
-        for call in z3_calls:
-            print (call)
-
     if AST_INFO:
         print ("------- Abstract Syntax Tree -------")
         print (astpp.dump(tree))
 
+    print()
     return 0
 
 if __name__ == "__main__":
     sys.exit(main())
+
+    '''
+//////////////////////////////////// TODO //////////////////////////////////////
+Handle recursive calls
+    - 
+if statements
+    - Optimize: Use z3.If() function to represent if-else-block instead of z3.Or() 
+for statements - support unknown number of iterations
+Find a way out of hard indexing into orelse nodes in an ast.if Node
+Change way if-expressions are handled - currently only accessable from with visit_Assign
+Call Nodes are sometimes wrapped in Expr Nodes. Find a way to call self.visit_Call
+from inside visit_Expr
+make one (global)visitor for making recursive calls - instead of creating a new
+visitor each time
+
+check validity: ForAll(Implies(And(precondition, z3 calls..), post-condition))
+
+make use of this capability/funciton: s.assert_exprs(x > 0, x < 2)
+
+'''

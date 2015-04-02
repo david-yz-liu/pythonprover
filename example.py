@@ -20,3 +20,12 @@ def sum_odd_under_ten():
 	for i in range(1, 10, 2):
 		x += i
 	return x
+
+def increment(x): # Satisfiable, but not valid
+	#@ requires(x > 1, x < 3)
+	#@ assures(y == 3) 
+	x += 1
+	y = x
+	return y
+	
+
