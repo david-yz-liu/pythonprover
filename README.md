@@ -3,7 +3,7 @@
 
 ## What is it?
 
-This program supports an extension of Python in which additions to the syntax allow programmers to verify arithmetic functions within their programs for correctness. You will be able to declare pre-conditions, post-conditions, and assertion statements to specify the range of behavior of your functions. This program is run at compile time, creating a logical representation of your program to determine its satisfiability. Guards against bad user input are still up to you, but this will help keep **you** sane!
+This program supports an extension of Python in which additions to the syntax allow programmers to verify arithmetic functions within their programs for correctness. You will be able to declare pre-conditions, post-conditions, and assertion statements to specify the range of behaviour of your functions. This program is run at compile time, creating a logical representation of your program to determine its satisfiability. Guards against bad user input are still up to you, but this will help keep **you** sane!
 
 Here is a simple example: 
 
@@ -15,9 +15,9 @@ Here is a simple example:
       return a
       #@ assures(a > 0)
 
-We have constrained gcd() to operate solely on positive numbers and guarded against division by zero with the *requires* statement (the pre-condition). Additionally, we've provided a little sanity check with the *assures* statement (the post-condition)
+We have constrained gcd() to operate solely on positive numbers and guarded against division by zero with the *requires* statement (the pre-condition). Additionally, we've provided a little sanity check with the *assures* statement (the post-condition).
 
-If-statements are supported, allowing you to track all possible behaviors of your functions.
+If-statements are supported, allowing you to track all possible behaviours of your functions.
 
     def odd_or_negative(x):
     	"""
@@ -36,7 +36,7 @@ If-statements are supported, allowing you to track all possible behaviors of you
 
 Range based loops: `for i in range (1, 9, 2)` and if-expressions: `x = 1 if y%2 == 1 else 0` are also supported.
 
-This program is a work in progress. I'm currently working on supporting function calls, while-loops, and for-loops that iterate over objects. Eventually I hope to extend support beyond just arithmetics, including string, list and dictionary operations
+This program is a work in progress. I'm currently working on supporting function calls, while-loops, and for-loops that iterate over objects. Eventually I hope to extend support beyond just arithmetics, including string, list and dictionary operations.
 ***
 
 ## Satisfiability and Validity
@@ -50,7 +50,7 @@ This program checks for both satisfiability and validity. Depending on your purp
     	y = x
     	return y
     	
-This function take 1 or 2 as an argument and returns 2 or 3, respectively. However, since the post condition is does not capture all possible output, this function is invalid. To achieve validity we must be very specific with our post-conditions
+This function takes 1 or 2 as an argument and returns 2 or 3, respectively. However, since the post condition is does not capture all possible output, this function is invalid. To achieve validity we must be very specific with our post-conditions
 
 ## How Does it Work?
 
@@ -166,4 +166,12 @@ Which would result in the following assersions:
     x5 == x4 + i5
     x5 == 25
 
-And that's it! More soon :)
+## Running it
+Usage: python prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file
+* Language: python 3.4
+* Dependencies: [codegen](https://pypi.python.org/pypi/codegen/1.0), [Z3](http://z3.codeplex.com/)
+* Commandline options:
+    
+        -a or --astinfo (a pretty printout of source_file's abstract syntax tree)
+        -d or --doc     (diplay prover.py's doc)
+        -z or --z3info  (a print out of z3 variables and assertions)
