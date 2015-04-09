@@ -98,6 +98,10 @@ def calculate_conditional_vars(before, after):
 "+incremented+" == "+after[key]+"))")
 
 def check_sat(node):
+    """
+    Produce the function report containing information about satisfiability and
+    validity.
+    """
     print ("Function report:")
     if global_solver.check() == sat:
         print ('\tname: {0}\n\tline {1}\n\t**Satisfiable**.'.format(node.name, node.lineno))
@@ -105,13 +109,15 @@ def check_sat(node):
         print ('\tname: {0}\n\tline {1}\n\t**Unsatisfiable**. No instantiation \
 of variables can satisfy all assertions'.format(node.name, node.lineno))
 
+    # Checking the post condition
     global post_conditions
     if post_conditions: 
         # substitute current incremented vars for each var in post-condition
         for key in local_vars:
-            for i in range(len(post_conditions)): # for elem in post_conditions ?
-                post_conditions[i] = re.sub(key, local_vars[key], post_conditions[i])
+            for elem in post_conditions:
+                elem = re.sub(key, local_vars[key], elem)
 
+        # Build string representation of all relevant information
         var_list = ", ".join(z3_vars)
         assertions = str(global_solver.assertions())
         assertions = re.sub("Or", "z3.Or", assertions)
@@ -120,14 +126,16 @@ of variables can satisfy all assertions'.format(node.name, node.lineno))
 
         post_cond_str = "ForAll(["+var_list+"], Implies(z3.And("+assertions+"), \
 z3.And("+conditions+")))"
-
+        
+        # Assert post-condition
         exec("global_solver.add("+post_cond_str+")")
 
         if global_solver.check() == sat:
-            print ('\t**Valid**.\n')
+            print ('\t**Valid**.')
         else: 
             print ('\t**Invalid**. Post-condition(s) falsifiable. \
-Fails on this assertion: \n\t"{0}"\n'.format(post_cond_str))
+Fails on this assertion: \n\t"{0}"'.format(post_cond_str))
+
     print()
 
 class Z3FunctionVisitor(ast.NodeVisitor):
@@ -314,22 +322,16 @@ class Z3Visitor(ast.NodeVisitor):
         Currently called only from visit_Assign and returns to there.
         Makes no z3 calls of its own
         """
+        def build_node_body(node):
+            body = codegen.to_source(node)
+            for key in local_vars:
+                body = re.sub(key, local_vars[key], body)
+            return body
+
         # rebuild the condition with variable substitution from local_vars
-        condition = codegen.to_source(node.test)
-        for key in local_vars:
-            condition = re.sub(key, local_vars[key], condition)
-        
-        # Assemble 'else' body
-        if_body = codegen.to_source(node.body)
-        for key in local_vars:
-            # substitute any variables with their present incremented variable
-            if_body = re.sub(key, local_vars[key], if_body)
-        
-        # Assemble 'if' body
-        else_body = codegen.to_source(node.orelse)
-        for key in local_vars:
-            # substitute any variables with their present incremented variable
-            else_body = re.sub(key, local_vars[key], else_body)
+        condition = build_node_body(node.test)
+        if_body = build_node_body(node.body) # Assemble 'else' body
+        else_body = build_node_body(node.orelse) # Assemble 'if' body
 
         return [condition, if_body, else_body]
             
@@ -501,8 +503,6 @@ class Z3Visitor(ast.NodeVisitor):
     def visit_Return(self, node):
         pass
 
-
-
 def main(argv=None):
     """
     Parse source file, find satisfiability, validity.
@@ -563,7 +563,6 @@ if __name__ == "__main__":
     '''
 //////////////////////////////////// TODO //////////////////////////////////////
 Handle recursive calls
-    - 
 if statements
     - Optimize: Use z3.If() function to represent if-else-block instead of z3.Or() 
 for statements - support unknown number of iterations
@@ -573,9 +572,5 @@ Call Nodes are sometimes wrapped in Expr Nodes. Find a way to call self.visit_Ca
 from inside visit_Expr
 make one (global)visitor for making recursive calls - instead of creating a new
 visitor each time
-
-check validity: ForAll(Implies(And(precondition, z3 calls..), post-condition))
-
 make use of this capability/funciton: s.assert_exprs(x > 0, x < 2)
-
 '''
