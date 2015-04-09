@@ -30,7 +30,6 @@ import copy
 import getopt
 from pprint import pprint
 from operator import itemgetter
-# import parser
 import sourcegen
 from sourcegen import *
 
@@ -95,28 +94,32 @@ def calculate_conditional_vars(before, after):
             incremented = increment_z3_var(key)
             
             # Give it the two possible values
-            exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", "+incremented+" == "+after[key]+"))")
+            exec("global_solver.add(z3.Or("+incremented+" == "+before[key]+", \
+"+incremented+" == "+after[key]+"))")
 
 def check_sat(node):
     print ("Function report:")
     if global_solver.check() == sat:
         print ('\tname: {0}\n\tline {1}\n\t**Satisfiable**.'.format(node.name, node.lineno))
     else: 
-        print ('\tname: {0}\n\tline {1}\n\t**Unsatisfiable**. No instantiation of variables\
-can satisfy all assertions'.format(node.name, node.lineno))
+        print ('\tname: {0}\n\tline {1}\n\t**Unsatisfiable**. No instantiation \
+of variables can satisfy all assertions'.format(node.name, node.lineno))
 
     global post_conditions
     if post_conditions: 
         # substitute current incremented vars for each var in post-condition
         for key in local_vars:
-            for i in range(len(post_conditions)):
+            for i in range(len(post_conditions)): # for elem in post_conditions ?
                 post_conditions[i] = re.sub(key, local_vars[key], post_conditions[i])
 
         var_list = ", ".join(z3_vars)
         assertions = str(global_solver.assertions())
+        assertions = re.sub("Or", "z3.Or", assertions)
+        assertions = re.sub("And", "z3.And", assertions)
         conditions = ", ".join(post_conditions)
 
-        post_cond_str = "ForAll(["+var_list+"], Implies(z3.And("+assertions+"), z3.And("+conditions+")))"
+        post_cond_str = "ForAll(["+var_list+"], Implies(z3.And("+assertions+"), \
+z3.And("+conditions+")))"
 
         exec("global_solver.add("+post_cond_str+")")
 
@@ -125,6 +128,7 @@ can satisfy all assertions'.format(node.name, node.lineno))
         else: 
             print ('\t**Invalid**. Post-condition(s) falsifiable. \
 Fails on this assertion: \n\t"{0}"\n'.format(post_cond_str))
+    print()
 
 class Z3FunctionVisitor(ast.NodeVisitor):
 
@@ -514,7 +518,7 @@ def main(argv=None):
         opts, args = getopt.getopt(argv[1:], "d z a" , ["doc", "z3info", "astinfo"])
     except getopt.error as msg:
         print (msg)
-        print ("Usage: prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file")
+        print ("Usage: python prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file")
         return 2
 
     # Process options
@@ -551,7 +555,6 @@ def main(argv=None):
         print ("------- Abstract Syntax Tree -------")
         print (astpp.dump(tree))
 
-    print()
     return 0
 
 if __name__ == "__main__":
