@@ -169,7 +169,7 @@ Which would result in the following assersions:
 ## Running it
 Usage: python prover.py [-adz] [--astinfo] [--doc] [--z3info] source_file
 * Language: python 3.4
-* Dependencies: [codegen](https://pypi.python.org/pypi/codegen/1.0), [Z3](http://z3.codeplex.com/)
+* Dependencies: [codegen](https://pypi.python.org/pypi/codegen/1.0), [Z3](http://z3.codeplex.com/) (depricated. See [Z3Prover](https://github.com/Z3Prover/z3) instead)
 * Commandline options:
     
         -a or --astinfo (a pretty printout of source_file's abstract syntax tree)
